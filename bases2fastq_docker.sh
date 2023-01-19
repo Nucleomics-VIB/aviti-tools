@@ -80,7 +80,7 @@ docker run \
   --user "$(id -u):$(id -g)" \
   -v $PWD:/workdir \
   elembio/bases2fastq:latest bases2fastq \
-    -p ${nthr} \
+    --num-threads ${nthr} \
     --run-manifest /workdir/${manifest} \
     --legacy-fastq \
     --log-level ${loglv} \
