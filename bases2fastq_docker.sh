@@ -15,7 +15,7 @@ usage='# Usage: bases2fastq_docker.sh
 # -o <path to output folder (in the current path)>
 # -m <path to custom RunManifest.csv (by default RunManifest.csv in the run folder)>
 # optional -t <threads> (default 8)>
-# optional -l <log level (default INFO, DEBUG for more)>
+# optional -l <log level (default DEBUG, INFO for less)>
 # script version '${version}'
 # [-h for this help]'
 
