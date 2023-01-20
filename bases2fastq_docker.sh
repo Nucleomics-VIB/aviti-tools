@@ -1,14 +1,14 @@
 #!/bin/bash
 
-# bases2fastq_adept_docker.sh
+# bases2fastq_docker.sh
 # basecall Aviti data from a completed run folder
 # run the command from the folder enclosing the run folder !!
 # run from docker as uid:gid to avoid outputfolder being owned by root
 #
-# Stéphane Plaisance - VIB-NC June-06-2018 v1.0
+# Stéphane Plaisance - VIB-NC January-19-2023 v1.0
 # visit our Git: https://github.com/Nucleomics-VIB
 
-version="1.01, 2023_04_18"
+version="1.01, 2023_01_18"
 
 usage='# Usage: bases2fastq_docker.sh
 # -i <path to run folder (in the current path)> 
