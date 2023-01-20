@@ -69,7 +69,9 @@ fi
 nthr=${threads:-8}
 
 # default or increased logging
-loglv=${loglevel:-"DEBUG"}
+# Severity level for logging. i.e. DEBUG, INFO, WARNING, ERROR (default INFO)
+deflog="DEBUG"
+loglv=${loglevel:-"${deflog}"}
 
 # default or custom manifest
 manifest=${manifest:-"${runfolder}/RunManifest.csv"}
