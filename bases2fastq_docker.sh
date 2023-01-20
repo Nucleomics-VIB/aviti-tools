@@ -5,7 +5,7 @@
 # run the command from the folder enclosing the run folder !!
 # run from docker as uid:gid to avoid outputfolder being owned by root
 #
-# Stéphane Plaisance - VIB-NC January-19-2023 v1.0
+# Stéphane Plaisance - VIB-NC January-17-2023 v1.0
 # visit our Git: https://github.com/Nucleomics-VIB
 
 version="1.01, 2023_01_18"
