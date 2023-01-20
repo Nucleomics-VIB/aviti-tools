@@ -13,7 +13,7 @@ version="1.01, 2023_01_18"
 usage='# Usage: bases2fastq_docker.sh
 # -i <path to run folder (in the current path)> 
 # -o <path to output folder (in the current path)>
-# -m <path to custom RunManifest.csv (by default RunManifest.csv in the run folder)>
+# optional -m <path to custom RunManifest.csv (by default RunManifest.csv in the run folder)>
 # optional -t <threads> (default 8)>
 # optional -l <log level (default DEBUG, INFO for less)>
 # script version '${version}'
