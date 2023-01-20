@@ -47,7 +47,7 @@ fi
 # check if required arguments were provided
 if [ -z "${runfolder+x}" ] || [ -z "${outfolder+x}" ]
 then
-   echo "# please provide mandatory arguments -r and -o!"
+   echo "# please provide mandatory arguments -i and -o!"
    echo "${usage}"
    exit 1
 fi
