@@ -69,7 +69,7 @@ fi
 nthr=${threads:-8}
 
 # default or increased logging
-loglv=${loglevel:-"INFO"}
+loglv=${loglevel:-"DEBUG"}
 
 # default or custom manifest
 manifest=${manifest:-"${runfolder}/RunManifest.csv"}
