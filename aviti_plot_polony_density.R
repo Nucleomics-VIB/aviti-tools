@@ -12,14 +12,15 @@ suppressPackageStartupMessages(library("grid"))
 
 # setwd("/data/analyses/aviti_bases2fastq/20230117_AV224503_4353-4354_20230117_AVITI_A_fastq_sp_notrim")
 
-ha <- HeatmapAnnotation(na_col = "white")
-
 # load Lane1 data
 lane1 <- read.table("tiles_lane1.txt", quote="\"", comment.char="")
 colnames(lane1) <- c("count", "tile")
 
-# add 3 NA where no data present (color white)
-l1.data <- matrix(c(NA, lane1$count[c(1:3)], NA, lane1$count[-c(1:3)], NA), 43, byrow=TRUE)
+# add 2x2 NA where no data present
+l1.data <- matrix(c(NA, lane1$count[c(1:3)], NA, lane1$count[c(4:103)], NA, lane1$count[c(104:106)], NA,
+                    NA, lane1$count[c(107:109)], NA, lane1$count[c(110:209)], NA, lane1$count[c(210:212)], NA), 
+                  44, 
+                  byrow=TRUE)
 
 hm1 <- ComplexHeatmap::Heatmap(l1.data, 
                                name="lane1",
@@ -31,8 +32,11 @@ hm1 <- ComplexHeatmap::Heatmap(l1.data,
 lane2 <- read.table("tiles_lane2.txt", quote="\"", comment.char="")
 colnames(lane2) <- c("count", "tile")
 
-# add 3 NA where no data present (color white)
-l2.data <- matrix(c(NA, lane2$count[c(1:3)], NA, lane2$count[-c(1:3)], NA), 43, byrow=TRUE)
+# add 2x2 NA where no data present
+l2.data <- matrix(c(NA, lane2$count[c(1:3)], NA, lane2$count[c(4:103)], NA, lane2$count[c(104:106)], NA,
+                    NA, lane2$count[c(107:109)], NA, lane2$count[c(110:209)], NA, lane2$count[c(210:212)], NA), 
+                  44, 
+                  byrow=TRUE)
 
 hm2 <- ComplexHeatmap::Heatmap(l2.data, 
                                name="lane2",
