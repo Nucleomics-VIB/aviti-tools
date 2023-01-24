@@ -43,7 +43,7 @@ hm2 <- ComplexHeatmap::Heatmap(l2.data,
 # assemble heatmaps and produce plot
 ht_list = hm1 + hm2
 
-pdf(file="aviti_loading_density.pdf",width = 5, height = 10, bg = "white")
+pdf(file="aviti_loading_density.pdf", width = 5, height = 10, bg = "white")
 
 ComplexHeatmap::draw(ht_list, 
      row_title = "Aviti polonies", 
