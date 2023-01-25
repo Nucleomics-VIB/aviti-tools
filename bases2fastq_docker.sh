@@ -3,12 +3,12 @@
 # bases2fastq_docker.sh
 # basecall Aviti data from a completed run folder
 # run the command from the folder enclosing the run folder !!
-# run from docker as uid:gid to avoid outputfolder being owned by root
+# run from docker as uid:gid to avoid output folder being owned by root
 #
 # Stéphane Plaisance - VIB-NC January-17-2023 v1.0
 # visit our Git: https://github.com/Nucleomics-VIB
 
-version="1.01, 2023_01_18"
+version="1.02, 2023_01_25"
 
 usage='# Usage: bases2fastq_docker.sh
 # -i <path to run folder (in the current path)> 
@@ -16,16 +16,18 @@ usage='# Usage: bases2fastq_docker.sh
 # optional -m <path to custom RunManifest.csv (by default RunManifest.csv in the run folder)>
 # optional -t <threads> (default 8)>
 # optional -l <log level (default DEBUG, INFO for less)>
+# optional -x <if NOT set apply --legacy-fastq (default)>
 # script version '${version}'
 # [-h for this help]'
 
-while getopts "i:o:m:t:l:h" opt; do
+while getopts "i:o:m:t:l:xh" opt; do
   case $opt in
     i) runfolder=${OPTARG} ;;
     o) outfolder=${OPTARG} ;;
     m) manifest=${OPTARG} ;;
     t) threads=${OPTARG} ;;
     l) loglevel=${OPTARG} ;;
+    x) nolegacy=1 ;;
     h) echo "${usage}" >&2; exit 0 ;;
     \?) echo "Invalid option: -${OPTARG}" >&2; exit 1 ;;
     *) echo "this command requires arguments, try -h" >&2; exit 1 ;;
@@ -68,13 +70,20 @@ fi
 # default or custom num threads
 nthr=${threads:-8}
 
+# default or custom manifest
+manifest=${manifest:-"${runfolder}/RunManifest.csv"}
+
+# legacy or not
+if [[ "${nolegacy}" == 1 ]]; then
+  legacy=""
+else 
+  legacy="--legacy-fastq"
+fi
+
 # default or increased logging
 # Severity level for logging. i.e. DEBUG, INFO, WARNING, ERROR (default INFO)
 deflog="DEBUG"
 loglv=${loglevel:-"${deflog}"}
-
-# default or custom manifest
-manifest=${manifest:-"${runfolder}/RunManifest.csv"}
 
 # calling docker
 docker run \
@@ -84,7 +93,7 @@ docker run \
   elembio/bases2fastq:latest bases2fastq \
     --num-threads ${nthr} \
     --run-manifest /workdir/${manifest} \
-    --legacy-fastq \
+    ${legacy} \
     --log-level ${loglv} \
     /workdir/${runfolder} \
     /workdir/${outfolder}
