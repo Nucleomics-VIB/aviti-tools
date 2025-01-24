@@ -46,7 +46,7 @@ for r1 in $(ls *${read_pattern}); do
     pfx=${pfx%_S[0-9]*}
 
     # Run fastp
-	echo "running fastp on ${r1} and ${r1/R1/R2}" | tee -a filtered_reads/run_log.txt
+	echo -e "\n# running fastp on ${r1} and ${r1/R1/R2}" | tee -a filtered_reads/run_log.txt
 	
     cmd="time fastp -i ${r1} -o filtered_reads/${pfx}_fastp_R1.fq.gz \
       -I ${r1/R1/R2} -O filtered_reads/${pfx}_fastp_R2.fq.gz \
