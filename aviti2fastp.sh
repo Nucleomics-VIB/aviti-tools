@@ -38,14 +38,16 @@ nth=4
 for r1 in $(ls *${read_pattern}); do
     # Extract minimal sample name string
     pfx=${r1%${read_pattern}}
+    
+    # remove project# from front
     pfx=${pfx#*_}
+    
+    # reove S# from back
     pfx=${pfx%_S[0-9]*}
 
-    # Debug (uncomment if needed)
-    # echo ${r1} ${pfx} ${lane}
-
     # Run fastp
-	echo "running fastp on ${r1} and ${r1/R1/R2}:"
+	echo "running fastp on ${r1} and ${r1/R1/R2}" | tee -a filtered_reads/run_log.txt
+	
     cmd="time fastp -i ${r1} -o filtered_reads/${pfx}_fastp_R1.fq.gz \
       -I ${r1/R1/R2} -O filtered_reads/${pfx}_fastp_R2.fq.gz \
       -w ${nth} \
