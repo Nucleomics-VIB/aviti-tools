@@ -8,6 +8,7 @@
 # Date: 2025-01-27
 # Author: SP@NC (+AI)
 
+# exit on any error
 set -e
 
 # Default values
@@ -54,9 +55,9 @@ fi
 # Create output directory if it doesn't exist
 mkdir -p "${output_dir}"
 
-# Find all unique sample numbers
+# Find all unique sample numbers in natural order
 samples=$(find "${input_dir}" -name "*fastp_R1.fq.gz" \
-  | sed -E 's/.*_S([0-9]+)_.*/\1/' | sort -u)
+  | sed -E 's/.*_S([0-9]+)_.*/\1/' | sort -u -V)
 
 # Function to process a single sample
 process_sample() {
