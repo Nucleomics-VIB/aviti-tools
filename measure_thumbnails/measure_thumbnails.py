@@ -32,8 +32,9 @@ os.makedirs(high_dir, exist_ok=True)
 
 # Analyze images and collect counts
 file_counts = []
+# , '.jpg', '.jpeg', '.bmp', '.tiff'
 for filename in os.listdir(directory):
-    if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff')):
+    if filename.lower().endswith(('.png')):
         path = os.path.join(directory, filename)
         img = Image.open(path).convert('L')
         arr = np.array(img)
