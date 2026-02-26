@@ -1,5 +1,9 @@
 ## test run on a random run taken from our NAS
 
+I tried to create a test tool to evaluate several masks and find the one giving the best compromize between read number and quality
+
+Note that I have no clue if the results are correct, I leave this to you experts
+
 ### run QC with several arbitrary masks (more can be added) 
 ./aviti_test_mask.sh -i $PWD/20250107_AV224503_4917_1 -o $PWD/test2
 
@@ -29,3 +33,4 @@ R1_Y15N_-R2_N_                                         97.991     96.220
 R1_N_-R2_N_                                            95.899     90.688
 Saved summary: /data/analyses/aviti_test_mask/test2/mask_integration_summary.csv
 ```
+
