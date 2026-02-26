@@ -4,12 +4,21 @@ I tried to create a test tool to evaluate several masks and find the one giving 
 
 Note that I have no clue if the results are correct, I leave this to you experts
 
-### run QC with several arbitrary masks (more can be added) 
+### run QC with several arbitrary masks
+
+Note that more can be added to the array on top of the script very easily
+
+```
 ./aviti_test_mask.sh -i $PWD/20250107_AV224503_4917_1 -o $PWD/test2
+```
 
 ### result integration
-./integrate_mask_results.sh -o test2
 
+```
+./integrate_mask_results.sh -o test2
+```
+
+Results of this test run
 
 ```
 ## MASK DIAGNOSTIC
