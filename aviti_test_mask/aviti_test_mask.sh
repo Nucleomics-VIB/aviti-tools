@@ -74,6 +74,10 @@ abspath() {
 command -v docker >/dev/null 2>&1 || { echo "Install Docker"; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "Install Python 3"; exit 1; }
 
+HOST_UID=$(id -u)
+HOST_GID=$(id -g)
+DOCKER_USER_ARGS=(--user "${HOST_UID}:${HOST_GID}")
+
 if command -v conda >/dev/null 2>&1; then
   eval "$(conda shell.bash hook)"
   conda activate pythonenv || true
@@ -228,7 +232,7 @@ PY
 fi
 
 # Version (best-effort)
-B2F_VERSION=$(docker run --rm --platform linux/amd64 elembio/bases2fastq:latest bases2fastq --version 2>&1 | sed -n 's/.*bases2fastq \([0-9.]*\).*/\1/p' | head -1)
+B2F_VERSION=$(docker run --rm "${DOCKER_USER_ARGS[@]}" --platform linux/amd64 elembio/bases2fastq:latest bases2fastq --version 2>&1 | sed -n 's/.*bases2fastq \([0-9.]*\).*/\1/p' | head -1)
 [[ -z "$B2F_VERSION" ]] && B2F_VERSION="unknown"
 echo "📦 bases2fastq v$B2F_VERSION"
 
@@ -250,6 +254,7 @@ run_mask_qc() {
 
     local -a cmd=(
       docker run --rm
+      "${DOCKER_USER_ARGS[@]}"
       "${DOCKER_INPUT_ARGS[@]}"
       -v "$outdir:/output"
       --platform linux/amd64

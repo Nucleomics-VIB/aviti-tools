@@ -4,6 +4,8 @@ I tried to create a test tool to evaluate several masks and find the one giving 
 
 Note that I have no clue if the results are correct, I leave this to you experts
 
+The Docker calls in `aviti_test_mask.sh` run with your host UID/GID (`--user $(id -u):$(id -g)`), so generated files in the output directory are owned by your current user instead of `root`.
+
 ### run QC with several arbitrary masks
 
 Note that more can be added to the array on top of the script very easily
