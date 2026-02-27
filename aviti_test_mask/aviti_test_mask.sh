@@ -16,12 +16,15 @@ TILE=""
 TILE_SOURCE="auto"
 TARGET_LANE=""
 MASKS=(
+  "R1:Y18N*-R2:Y18N*"
+  "R1:N16Y15N*-R2:N16Y15N*"
+  "R1:N16Y15N*-R2:Y15N*"
   "R1:Y15N*-R2:Y15N*"
   "R1:Y12N*-R2:Y12N*"
-  "R1:Y18N*-R2:Y18N*"
+  "R1:N12Y15N*-R2:Y8N*"
   "R1:Y10N*-R2:Y10N*"
+  "R1:Y8N*-R2:Y8N*"
   "R1:N*-R2:N*"
-  "R1:Y15N*-R2:N*"
 )
 
 # Parse args
