@@ -6,12 +6,23 @@ Note that I have no clue if the results are correct, I leave this to you experts
 
 The Docker calls in `aviti_test_mask.sh` run with your host UID/GID (`--user $(id -u):$(id -g)`), so generated files in the output directory are owned by your current user instead of `root`.
 
+Current script behavior:
+- Runs `bases2fastq` QC on the full run (no single-tile mode).
+- Uses `BaseCalls` content as-is (no pre-unzip step in the script).
+- Supports `-p/--threads` to set `bases2fastq -p` (default: `24`).
+
 ### run QC with several arbitrary masks
 
 Note that more can be added to the array on top of the script very easily
 
 ```
 ./aviti_test_mask.sh -i $PWD/20250107_AV224503_4917_1 -o $PWD/test2
+```
+
+With explicit thread count:
+
+```
+./aviti_test_mask.sh -i $PWD/20250107_AV224503_4917_1 -o $PWD/test2 -p 24
 ```
 
 ### result integration
