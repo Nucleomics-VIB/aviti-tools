@@ -1,6 +1,6 @@
 # Project status — aviti_test_mask
 
-**Last updated:** 2026-05-22
+**Last updated:** 2026-05-22 (session 2)
 **Branch:** `develop`
 
 ---
@@ -59,6 +59,18 @@ Custom config file: `-c / --config path/to/config.yaml`
 - Example for a 128 GB server with `max_jobs: 4`: set `mem_limit_per_job: 16g` to
   reserve ≥ 64 GB for the OS and other tools
 
+### Error reporting and observability
+
+- Per-mask success line: `✅ [mask] completed`
+- Per-mask failure line: `❌ [mask] FAILED (exit N) — see .../run.log`
+- OOM detection: exit 137 prints specific message with remediation hint
+- Script exits 1 if any mask fails (callers and CI can detect partial failure)
+- `check_resources()` runs before the loop against current host state:
+  - CPU: warns if `MAX_JOBS × THREADS` exceeds logical CPUs; shows 1-min load avg
+  - RAM: warns if `MAX_JOBS × MEM_LIMIT` exceeds `MemAvailable` (live, accounts for
+    other running jobs); reports free RAM even when no cap is set
+  - Warns only — never aborts; user decides whether to proceed
+
 ### Result integration (`integrate_mask_results.sh`)
 - Pure Python 3 stdlib (no third-party packages); minimum Python 3.6
 - Parses `Metrics.csv`, `run.log`, HTML QC reports, and `RunStats.json`
@@ -73,11 +85,13 @@ Custom config file: `-c / --config path/to/config.yaml`
 |------|-------|
 | Core QC loop | Stable |
 | YAML mask file | Stable |
-| config.yaml loader | Stable |
-| RAM staging (`--cache-input`) | Implemented, not yet tested on target server |
-| Job pool semaphore (`--jobs`) | Implemented, not yet tested on target server |
+| config.yaml loader | Stable (DOCKER_IMAGE bug fixed) |
+| RAM staging (`--cache-input`) | Implemented; not yet tested on target server |
+| Job pool semaphore (`--jobs`) | Implemented; not yet tested on target server |
 | OOM cap (`mem_limit_per_job`) | Implemented; value to be tuned after first server run |
 | Docker image pinning | Implemented; still using `latest` — pin once version is confirmed |
+| Error reporting per mask | Stable (name, exit code, OOM detection, log path) |
+| Resource probe at startup | Stable (CPU + RAM vs current host state) |
 | Result integration | Stable |
 
 ---
@@ -99,9 +113,10 @@ Recommended invocation:
 
 ## Open / next steps
 
-- [ ] Run on Ubuntu server and validate `--cache-input` staging path (`/dev/shm`)
+- [ ] Run on Ubuntu server; validate `--cache-input` stages to `/dev/shm`
 - [ ] Benchmark `-j 4` vs `-j 8` on server hardware
 - [ ] Set `mem_limit_per_job` in `config.yaml` after first run (tune to available RAM)
 - [ ] Pin `docker_image` to a specific `bases2fastq` version once confirmed stable
 - [ ] Consider web-tool integration: mask list upload → `--masks-file` path
+- [ ] Split into `lib/` modules if script exceeds ~500 lines (currently ~420)
 - [ ] Merge `develop` → `main` once server validation passes
