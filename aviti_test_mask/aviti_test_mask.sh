@@ -62,13 +62,38 @@ done
 abspath() {
   local path="$1"
   if command -v realpath >/dev/null 2>&1; then
-    realpath "$path"
+    realpath "$path" 2>/dev/null || (
+      cd "$(dirname "$path")" && printf '%s/%s\n' "$PWD" "$(basename "$path")"
+    )
   else
     (
       cd "$(dirname "$path")"
       printf '%s/%s\n' "$PWD" "$(basename "$path")"
     )
   fi
+}
+
+# Return 0 if path is on a network/LAN mount (NFS or SMB)
+is_lan_mount() {
+  local path="$1"
+  local device
+  device=$(df "$path" 2>/dev/null | awk 'NR==2{print $1}') || return 1
+  # NFS: server:/export  SMB/CIFS: //server/share
+  [[ "$device" =~ ^// ]] && return 0
+  [[ "$device" =~ ^[A-Za-z0-9._-]+:/ ]] && return 0
+  return 1
+}
+
+# Verify Docker can actually see files inside a bind-mounted path
+verify_docker_input() {
+  local host_path="$1"
+  local count
+  count=$(docker run --rm \
+    --platform linux/amd64 \
+    -v "$host_path:/input:ro" \
+    elembio/bases2fastq:latest \
+    sh -c 'ls /input 2>/dev/null | wc -l' 2>/dev/null) || count=0
+  [[ "${count// /}" -gt 0 ]] 2>/dev/null
 }
 
 # Requirements
@@ -94,6 +119,20 @@ DOCKER_INPUT_ARGS=(-v "$INPUT_ABS:/input:ro")
 echo "📁 Input:  $INPUT_ABS"
 echo "📁 Output: $OUTPUT_ABS"
 echo "🧵 Threads: $THREADS"
+
+# Warn when input is on a network mount — Docker Desktop requires it to be
+# listed under Settings > Resources > File Sharing or the bind mount will be empty.
+if is_lan_mount "$INPUT_ABS"; then
+  echo "⚠️  Input is on a LAN/network mount."
+  echo "   Docker Desktop must have '$INPUT_ABS' (or a parent path) in"
+  echo "   Settings > Resources > File Sharing, otherwise /input will be empty."
+  echo "   Verifying Docker can see the input files..."
+  if ! verify_docker_input "$INPUT_ABS"; then
+    echo "❌ Docker cannot read '$INPUT_ABS' — add it to Docker file sharing and retry."
+    exit 1
+  fi
+  echo "✅ Docker mount verified."
+fi
 
 BASECALLS_DIR="$INPUT_ABS/BaseCalls"
 [[ -d "$BASECALLS_DIR" ]] || { echo "Missing BaseCalls directory: $BASECALLS_DIR"; exit 1; }
