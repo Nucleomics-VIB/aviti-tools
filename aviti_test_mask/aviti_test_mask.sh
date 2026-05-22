@@ -6,14 +6,20 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 -i RUN_DIR -o OUTPUT_DIR [-p THREADS] [-m MASKS_FILE]"
-  echo "  -p THREADS:     bases2fastq worker threads (default: 8)"
+  echo "Usage: $0 -i RUN_DIR -o OUTPUT_DIR [-p THREADS] [-j JOBS] [-m MASKS_FILE] [--cache-input]"
+  echo "  -p THREADS:     bases2fastq worker threads per container (default: 8)"
+  echo "  -j JOBS:        max concurrent mask runs (default: 4)"
   echo "  -m MASKS_FILE:  YAML file with mask list (default: built-in array)"
+  echo "  --cache-input:  copy input to local fast storage before running (recommended on NAS)"
 }
 
 INPUT_DIR=""
 OUTPUT_BASE=""
 THREADS="8"
+MAX_JOBS=4
+CACHE_INPUT=0
+CACHE_DIR=""
+_SEMFIFO=""
 MASKS_FILE=""
 MASKS=(
   "R1:Y18N*-R2:Y18N*"
@@ -45,6 +51,15 @@ while [[ $# -gt 0 ]]; do
       THREADS="$2"
       shift 2
       ;;
+    -j|--jobs)
+      [[ $# -lt 2 ]] && { usage; exit 1; }
+      MAX_JOBS="$2"
+      shift 2
+      ;;
+    --cache-input)
+      CACHE_INPUT=1
+      shift
+      ;;
     -m|--masks-file)
       [[ $# -lt 2 ]] && { usage; exit 1; }
       MASKS_FILE="$2"
@@ -63,7 +78,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -z "$INPUT_DIR" || -z "$OUTPUT_BASE" ]] && { usage; exit 1; }
-[[ "$THREADS" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid thread count: $THREADS"; exit 1; }
+[[ "$THREADS"  =~ ^[1-9][0-9]*$ ]] || { echo "Invalid thread count: $THREADS"; exit 1; }
+[[ "$MAX_JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid job count: $MAX_JOBS"; exit 1; }
 
 if [[ -n "$MASKS_FILE" ]]; then
   [[ -f "$MASKS_FILE" ]] || { echo "Masks file not found: $MASKS_FILE"; exit 1; }
@@ -126,6 +142,38 @@ verify_docker_input() {
   [[ "${count// /}" -gt 0 ]] 2>/dev/null
 }
 
+# Stage input to fast local storage (tmpfs on Linux, /tmp on macOS)
+# Updates INPUT_ABS and DOCKER_INPUT_ARGS on success; returns 1 and warns on failure.
+stage_input_to_ram() {
+  local src="$1"
+  local stage_root
+  if [[ -d /dev/shm ]] && df /dev/shm 2>/dev/null | awk 'NR==2{print $1}' | grep -qi tmpfs; then
+    stage_root=/dev/shm
+  else
+    stage_root="${TMPDIR:-/tmp}"
+    echo "ℹ️  No tmpfs at /dev/shm — staging to $stage_root (local disk)"
+  fi
+  local run_kb free_kb
+  run_kb=$(du -sk "$src" 2>/dev/null | cut -f1)
+  free_kb=$(df -k "$stage_root" | awk 'NR==2{print $4}')
+  if (( run_kb > free_kb * 90 / 100 )); then
+    echo "⚠️  Run ($((run_kb / 1024)) MB) exceeds 90% of space in $stage_root ($((free_kb / 1024)) MB) — skipping cache"
+    return 1
+  fi
+  CACHE_DIR=$(mktemp -d "$stage_root/aviti_qc_XXXXX")
+  echo "💾 Staging input ($((run_kb / 1024)) MB) → $CACHE_DIR …"
+  cp -r "$src/." "$CACHE_DIR/"
+  INPUT_ABS="$CACHE_DIR"
+  DOCKER_INPUT_ARGS=(-v "$INPUT_ABS:/input:ro")
+  echo "✅ Input staged to fast storage"
+}
+
+_cleanup() {
+  [[ -n "$_SEMFIFO" ]] && { exec 3>&- 2>/dev/null || true; rm -f "$_SEMFIFO"; }
+  [[ -n "$CACHE_DIR" ]] && rm -rf "$CACHE_DIR"
+}
+trap _cleanup EXIT
+
 # Requirements
 command -v docker >/dev/null 2>&1 || { echo "Install Docker"; exit 1; }
 
@@ -146,10 +194,6 @@ OUTPUT_ABS=$(abspath "$OUTPUT_BASE")
 export OUTPUT_BASE="$OUTPUT_ABS"
 DOCKER_INPUT_ARGS=(-v "$INPUT_ABS:/input:ro")
 
-echo "📁 Input:  $INPUT_ABS"
-echo "📁 Output: $OUTPUT_ABS"
-echo "🧵 Threads: $THREADS"
-
 # Warn when input is on a network mount — Docker Desktop requires it to be
 # listed under Settings > Resources > File Sharing or the bind mount will be empty.
 if is_lan_mount "$INPUT_ABS"; then
@@ -166,6 +210,14 @@ fi
 
 BASECALLS_DIR="$INPUT_ABS/BaseCalls"
 [[ -d "$BASECALLS_DIR" ]] || { echo "Missing BaseCalls directory: $BASECALLS_DIR"; exit 1; }
+
+if [[ "$CACHE_INPUT" -eq 1 ]]; then
+  stage_input_to_ram "$INPUT_ABS" || true  # fallback to original path on failure
+fi
+
+echo "📁 Input:   $INPUT_ABS"
+echo "📁 Output:  $OUTPUT_ABS"
+echo "🧵 Threads: $THREADS  |  ⚙️  Jobs: $MAX_JOBS  |  💾 Cache: $([[ -n $CACHE_DIR ]] && echo yes || echo no)"
 
 # bases2fastq version (best-effort)
 B2F_VERSION_RAW=$(docker run --rm "${DOCKER_USER_ARGS[@]}" --platform linux/amd64 elembio/bases2fastq:latest bases2fastq --version 2>&1 || true)
@@ -202,23 +254,30 @@ run_mask_qc() {
     -p "$THREADS" 2>&1 | tee "$logfile"
 }
 
-# Run QC for each filter mask
+# Run QC for each filter mask — at most MAX_JOBS containers concurrently
 mkdir -p "$OUTPUT_ABS/qc_runs"
 PIDS=()
 
+_SEMFIFO="$(mktemp -u)"
+mkfifo "$_SEMFIFO"
+exec 3<>"$_SEMFIFO"
+for ((si=0; si<MAX_JOBS; si++)); do printf ' ' >&3; done
+
 for i in "${!MASKS[@]}"; do
+  read -r -n1 -u3  # block until a concurrency slot is free
   MASK="${MASKS[$i]}"
   SAFE_MASK=$(echo "$MASK" | tr -c '[:alnum:]_.-' '_' | tr -s '_')
   OUTDIR="$OUTPUT_ABS/qc_runs/mask_${i}_${SAFE_MASK}"
   mkdir -p "$OUTDIR"
-
   echo "[$((i + 1))/${#MASKS[@]}] $MASK"
-  run_mask_qc "$MASK" "$OUTDIR" &
-
+  (
+    trap 'printf " " >&3' EXIT  # release slot on subshell exit (normal or error)
+    run_mask_qc "$MASK" "$OUTDIR"
+  ) &
   PIDS+=("$!")
 done
 
-# Wait for completion
+# Wait for all jobs and tally results
 SUCCESS=0
 for pid in "${PIDS[@]}"; do
   if wait "$pid" 2>/dev/null; then
