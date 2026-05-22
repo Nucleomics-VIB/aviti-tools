@@ -33,6 +33,14 @@ done
 [[ -z "$OUTPUT_BASE" ]] && { usage; exit 1; }
 [[ -d "$OUTPUT_BASE" ]] || { echo "Output directory not found: $OUTPUT_BASE"; exit 1; }
 
+# Activate conda env if available (mirrors main script behaviour)
+if command -v conda >/dev/null 2>&1; then
+  eval "$(conda shell.bash hook)"
+  conda activate pythonenv || true
+fi
+
+command -v python3 >/dev/null 2>&1 || { echo "python3 not found — activate your environment and retry"; exit 1; }
+
 python3 - "$OUTPUT_BASE" <<'PY'
 import csv
 import json
@@ -40,7 +48,10 @@ import re
 import sys
 from pathlib import Path
 
-output_base = Path(sys.argv[1]).resolve()
+try:
+    output_base = Path(sys.argv[1]).resolve()
+except OSError:
+    output_base = Path(sys.argv[1]).absolute()
 qc_dir = output_base / "qc_runs"
 
 if not qc_dir.exists():
@@ -391,3 +402,7 @@ with summary_csv.open("w", newline="", encoding="utf-8") as handle:
 
 print(f"Saved summary: {summary_csv}")
 PY
+
+if command -v conda >/dev/null 2>&1; then
+  conda deactivate || true
+fi
