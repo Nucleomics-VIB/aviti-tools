@@ -44,6 +44,22 @@ With explicit thread count:
 ./integrate_mask_results.sh -o test2
 ```
 
+### Python requirements for `integrate_mask_results.sh`
+
+The integration script embeds a Python 3 program that uses **only standard library modules** — no third-party packages are needed:
+
+| Module | Purpose |
+| ------ | ------- |
+| `csv` | Read `Metrics.csv` and write the summary CSV |
+| `json` | Parse `RunStats.json` |
+| `re` | Extract numeric metrics from logs and HTML |
+| `sys` | CLI argument access and exit codes |
+| `pathlib` | Path handling (`Path`) |
+
+**Minimum Python version:** 3.6 (f-strings and `pathlib` required).
+
+The script activates a conda environment named `pythonenv` if conda is available, but any Python 3.6+ interpreter on `PATH` will work.
+
 Results of this test run
 
 ```text
