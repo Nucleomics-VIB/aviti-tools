@@ -1,0 +1,13 @@
+# Default masks for aviti_test_mask.sh
+# One mask per line; bases2fastq filter-mask syntax.
+# Pass a custom copy with: --masks-file my_masks.yaml
+masks:
+  - "R1:Y18N*-R2:Y18N*"
+  - "R1:N16Y15N*-R2:N16Y15N*"
+  - "R1:N16Y15N*-R2:Y15N*"
+  - "R1:Y15N*-R2:Y15N*"
+  - "R1:Y12N*-R2:Y12N*"
+  - "R1:N12Y15N*-R2:Y8N*"
+  - "R1:Y10N*-R2:Y10N*"
+  - "R1:Y8N*-R2:Y8N*"
+  - "R1:N*-R2:N*"

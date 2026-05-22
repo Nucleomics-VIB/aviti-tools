@@ -6,13 +6,15 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 -i RUN_DIR -o OUTPUT_DIR [-p THREADS]"
-  echo "  -p THREADS: bases2fastq worker threads (default: 8)"
+  echo "Usage: $0 -i RUN_DIR -o OUTPUT_DIR [-p THREADS] [-m MASKS_FILE]"
+  echo "  -p THREADS:     bases2fastq worker threads (default: 8)"
+  echo "  -m MASKS_FILE:  YAML file with mask list (default: built-in array)"
 }
 
 INPUT_DIR=""
 OUTPUT_BASE=""
 THREADS="8"
+MASKS_FILE=""
 MASKS=(
   "R1:Y18N*-R2:Y18N*"
   "R1:N16Y15N*-R2:N16Y15N*"
@@ -43,6 +45,11 @@ while [[ $# -gt 0 ]]; do
       THREADS="$2"
       shift 2
       ;;
+    -m|--masks-file)
+      [[ $# -lt 2 ]] && { usage; exit 1; }
+      MASKS_FILE="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -57,6 +64,29 @@ done
 
 [[ -z "$INPUT_DIR" || -z "$OUTPUT_BASE" ]] && { usage; exit 1; }
 [[ "$THREADS" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid thread count: $THREADS"; exit 1; }
+
+if [[ -n "$MASKS_FILE" ]]; then
+  [[ -f "$MASKS_FILE" ]] || { echo "Masks file not found: $MASKS_FILE"; exit 1; }
+  set -f  # disable glob expansion while loading mask strings containing *
+  mapfile -t MASKS < <(python3 - "$MASKS_FILE" <<'PY'
+import re, sys
+with open(sys.argv[1]) as fh:
+    for line in fh:
+        m = re.match(r'\s*-\s*(.*?)\s*$', line)
+        if not m:
+            continue
+        val = m.group(1)
+        if (val.startswith('"') and val.endswith('"')) or \
+           (val.startswith("'") and val.endswith("'")):
+            val = val[1:-1]
+        if val and not val.startswith('#'):
+            print(val)
+PY
+)
+  set +f
+  [[ ${#MASKS[@]} -gt 0 ]] || { echo "No masks found in: $MASKS_FILE"; exit 1; }
+  echo "📋 Loaded ${#MASKS[@]} masks from $MASKS_FILE"
+fi
 
 # Resolve absolute path without requiring GNU realpath on macOS
 abspath() {
