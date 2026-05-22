@@ -1,0 +1,26 @@
+# Resource configuration for aviti_test_mask.sh
+# Adapt these values to your host before running.
+# All settings can be overridden at runtime by CLI flags.
+
+# bases2fastq worker threads per container (-p / --threads)
+threads: 8
+
+# Maximum concurrent mask containers (-j / --jobs)
+# Local NVMe: 6-9  |  NAS 1GbE: 1-2  |  NAS 10GbE: 3-4
+max_jobs: 4
+
+# Copy input to fast local storage before running (--cache-input)
+# true = recommended when input is on NAS/NFS
+# On Linux: stages to /dev/shm (RAM); on macOS: stages to /tmp (local disk)
+cache_input: false
+
+# Docker memory limit per container to prevent OOM killing other jobs.
+# Format: 8g, 4096m, etc.  Set ~ or leave empty for no limit (Docker default).
+# Example: server with 128 GB RAM, max_jobs: 4 → set 16g to cap each container
+# at 16 GB and leave ~64 GB headroom for the OS and other running tools.
+mem_limit_per_job: ~
+
+# bases2fastq Docker image to use.
+# Pin to a specific version for reproducibility (e.g. elembio/bases2fastq:2.3.1).
+# The script will pull the image at startup if it is not already present locally.
+docker_image: elembio/bases2fastq:latest

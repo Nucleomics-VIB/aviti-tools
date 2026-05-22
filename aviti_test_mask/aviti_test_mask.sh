@@ -6,10 +6,11 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 -i RUN_DIR -o OUTPUT_DIR [-p THREADS] [-j JOBS] [-m MASKS_FILE] [--cache-input]"
+  echo "Usage: $0 -i RUN_DIR -o OUTPUT_DIR [-p THREADS] [-j JOBS] [-m MASKS_FILE] [-c CONFIG] [--cache-input]"
   echo "  -p THREADS:     bases2fastq worker threads per container (default: 8)"
   echo "  -j JOBS:        max concurrent mask runs (default: 4)"
   echo "  -m MASKS_FILE:  YAML file with mask list (default: built-in array)"
+  echo "  -c CONFIG:      YAML config file (default: config.yaml next to this script)"
   echo "  --cache-input:  copy input to local fast storage before running (recommended on NAS)"
 }
 
@@ -18,9 +19,19 @@ OUTPUT_BASE=""
 THREADS="8"
 MAX_JOBS=4
 CACHE_INPUT=0
+MEM_LIMIT=""
+DOCKER_IMAGE="elembio/bases2fastq:latest"
 CACHE_DIR=""
 _SEMFIFO=""
 MASKS_FILE=""
+CONFIG_FILE="$(dirname "$0")/config.yaml"
+
+# Pre-scan argv for -c/--config so the correct file is loaded before full parsing
+for ((_i=1; _i<=$#; _i++)); do
+  if [[ "${!_i}" == "-c" || "${!_i}" == "--config" ]]; then
+    _j=$((_i+1)); CONFIG_FILE="${!_j}"; break
+  fi
+done; unset _i _j
 MASKS=(
   "R1:Y18N*-R2:Y18N*"
   "R1:N16Y15N*-R2:N16Y15N*"
@@ -32,6 +43,36 @@ MASKS=(
   "R1:Y8N*-R2:Y8N*"
   "R1:N*-R2:N*"
 )
+
+# Load config.yaml — CLI flags parsed below will override these values
+if [[ -f "$CONFIG_FILE" ]]; then
+  while IFS='=' read -r _key _val; do
+    case "$_key" in
+      THREADS)    THREADS="$_val"    ;;
+      MAX_JOBS)   MAX_JOBS="$_val"   ;;
+      CACHE_INPUT) CACHE_INPUT="$_val" ;;
+      MEM_LIMIT)  MEM_LIMIT="$_val"  ;;
+    esac
+  done < <(python3 - "$CONFIG_FILE" <<'PY'
+import re, sys
+keys = {'threads': 'THREADS', 'max_jobs': 'MAX_JOBS',
+        'cache_input': 'CACHE_INPUT', 'mem_limit_per_job': 'MEM_LIMIT',
+        'docker_image': 'DOCKER_IMAGE'}
+with open(sys.argv[1]) as fh:
+    for line in fh:
+        m = re.match(r'^(\w+)\s*:\s*(.*?)\s*$', line)
+        if not m or m.group(1) not in keys:
+            continue
+        val = m.group(2).strip().strip('"\'')
+        if val.lower() in ('true', 'yes'):
+            val = '1'
+        elif val.lower() in ('false', 'no', '~', ''):
+            val = '0' if m.group(1) == 'cache_input' else ''
+        print(f"{keys[m.group(1)]}={val}")
+PY
+)
+  echo "⚙️  Config: $CONFIG_FILE"
+fi
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -49,6 +90,11 @@ while [[ $# -gt 0 ]]; do
     -p|--threads)
       [[ $# -lt 2 ]] && { usage; exit 1; }
       THREADS="$2"
+      shift 2
+      ;;
+    -c|--config)
+      [[ $# -lt 2 ]] && { usage; exit 1; }
+      CONFIG_FILE="$2"
       shift 2
       ;;
     -j|--jobs)
@@ -137,7 +183,7 @@ verify_docker_input() {
   count=$(docker run --rm \
     --platform linux/amd64 \
     -v "$host_path:/input:ro" \
-    elembio/bases2fastq:latest \
+    "$DOCKER_IMAGE" \
     sh -c 'ls /input 2>/dev/null | wc -l' 2>/dev/null) || count=0
   [[ "${count// /}" -gt 0 ]] 2>/dev/null
 }
@@ -176,6 +222,8 @@ trap _cleanup EXIT
 
 # Requirements
 command -v docker >/dev/null 2>&1 || { echo "Install Docker"; exit 1; }
+echo "🐳 Pulling $DOCKER_IMAGE …"
+docker pull --platform linux/amd64 "$DOCKER_IMAGE"
 
 HOST_UID=$(id -u)
 HOST_GID=$(id -g)
@@ -217,10 +265,10 @@ fi
 
 echo "📁 Input:   $INPUT_ABS"
 echo "📁 Output:  $OUTPUT_ABS"
-echo "🧵 Threads: $THREADS  |  ⚙️  Jobs: $MAX_JOBS  |  💾 Cache: $([[ -n $CACHE_DIR ]] && echo yes || echo no)"
+echo "🧵 Threads: $THREADS  |  ⚙️  Jobs: $MAX_JOBS  |  💾 Cache: $([[ -n $CACHE_DIR ]] && echo yes || echo no)  |  🛡️  Mem/job: ${MEM_LIMIT:-unlimited}"
 
 # bases2fastq version (best-effort)
-B2F_VERSION_RAW=$(docker run --rm "${DOCKER_USER_ARGS[@]}" --platform linux/amd64 elembio/bases2fastq:latest bases2fastq --version 2>&1 || true)
+B2F_VERSION_RAW=$(docker run --rm "${DOCKER_USER_ARGS[@]}" --platform linux/amd64 "$DOCKER_IMAGE" bases2fastq --version 2>&1 || true)
 B2F_VERSION=$(printf '%s\n' "$B2F_VERSION_RAW" \
   | grep -Eio 'bases2fastq[^0-9]*v?[0-9]+(\.[0-9]+){1,3}' \
   | head -1 \
@@ -241,13 +289,17 @@ run_mask_qc() {
   local mask="$1"
   local outdir="$2"
   local logfile="$outdir/run.log"
+  local mem_args=()
+  # --memory-swap equal to --memory disables swap, capping hard at MEM_LIMIT (OOM prevention)
+  [[ -n "$MEM_LIMIT" ]] && mem_args=(--memory "$MEM_LIMIT" --memory-swap "$MEM_LIMIT")
 
   docker run --rm \
     "${DOCKER_USER_ARGS[@]}" \
     "${DOCKER_INPUT_ARGS[@]}" \
+    "${mem_args[@]}" \
     -v "$outdir:/output" \
     --platform linux/amd64 \
-    elembio/bases2fastq:latest \
+    "$DOCKER_IMAGE" \
     bases2fastq /input /output \
     --qc-only \
     --filter-mask "$mask" \
