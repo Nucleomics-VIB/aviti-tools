@@ -50,8 +50,9 @@ if [[ -f "$CONFIG_FILE" ]]; then
     case "$_key" in
       THREADS)    THREADS="$_val"    ;;
       MAX_JOBS)   MAX_JOBS="$_val"   ;;
-      CACHE_INPUT) CACHE_INPUT="$_val" ;;
-      MEM_LIMIT)  MEM_LIMIT="$_val"  ;;
+      CACHE_INPUT)   CACHE_INPUT="$_val"   ;;
+      MEM_LIMIT)     MEM_LIMIT="$_val"     ;;
+      DOCKER_IMAGE)  DOCKER_IMAGE="$_val"  ;;
     esac
   done < <(python3 - "$CONFIG_FILE" <<'PY'
 import re, sys
@@ -208,10 +209,72 @@ stage_input_to_ram() {
   fi
   CACHE_DIR=$(mktemp -d "$stage_root/aviti_qc_XXXXX")
   echo "💾 Staging input ($((run_kb / 1024)) MB) → $CACHE_DIR …"
-  cp -r "$src/." "$CACHE_DIR/"
+  if ! cp -r "$src/." "$CACHE_DIR/"; then
+    echo "❌ Staging failed — removing partial copy, running against original path"
+    rm -rf "$CACHE_DIR"
+    CACHE_DIR=""
+    return 1
+  fi
   INPUT_ABS="$CACHE_DIR"
   DOCKER_INPUT_ARGS=(-v "$INPUT_ABS:/input:ro")
   echo "✅ Input staged to fast storage"
+}
+
+# Report current host resource headroom against the requested allocation.
+# Warns on overcommit; never aborts — the user decides whether to continue.
+check_resources() {
+  local n_cpus load1 req_threads req_mem_kb avail_mem_kb
+
+  # --- CPU ---
+  n_cpus=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 0)
+  req_threads=$(( MAX_JOBS * THREADS ))
+  load1=$(awk '{print $1}' /proc/loadavg 2>/dev/null || uptime | grep -Eo 'load average[s]?: [0-9.]+' | grep -Eo '[0-9.]+$' || echo 0)
+
+  echo "── Resource check ──────────────────────────────"
+  if [[ "$n_cpus" -gt 0 ]]; then
+    if (( req_threads > n_cpus )); then
+      echo "⚠️  CPU  : ${req_threads} threads requested (${MAX_JOBS} jobs × ${THREADS}) — host has ${n_cpus} logical CPUs"
+      echo "         Containers will time-share; consider reducing --jobs or -p"
+    else
+      echo "✅ CPU  : ${req_threads} / ${n_cpus} logical CPUs requested"
+    fi
+    echo "   Load : ${load1} (1-min avg, ${n_cpus} CPUs)"
+  fi
+
+  # --- RAM (only when MEM_LIMIT is set) ---
+  if [[ -n "$MEM_LIMIT" ]]; then
+    req_mem_kb=$(python3 - "$MEM_LIMIT" "$MAX_JOBS" <<'PY'
+import re, sys
+m = re.fullmatch(r'([0-9]+(?:\.[0-9]+)?)([kmgKMG]?)[bB]?', sys.argv[1].strip())
+if not m:
+    print(0); sys.exit()
+n, u = float(m.group(1)), m.group(2).lower()
+kb = int(n * {'k': 1, 'm': 1024, 'g': 1024*1024}.get(u, 1))
+print(kb * int(sys.argv[2]))
+PY
+)
+    if [[ -f /proc/meminfo ]]; then
+      avail_mem_kb=$(awk '/^MemAvailable/{print $2}' /proc/meminfo)
+    else
+      avail_mem_kb=0
+    fi
+    local req_gb=$(( req_mem_kb / 1024 / 1024 ))
+    local avail_gb=$(( avail_mem_kb / 1024 / 1024 ))
+    if [[ "$avail_mem_kb" -gt 0 ]]; then
+      if (( req_mem_kb > avail_mem_kb )); then
+        echo "⚠️  RAM  : ${req_gb} GB requested (${MAX_JOBS} × ${MEM_LIMIT}) — only ${avail_gb} GB available now"
+        echo "         Risk of OOM; reduce --jobs or mem_limit_per_job, or free memory first"
+      else
+        echo "✅ RAM  : ${req_gb} GB requested / ${avail_gb} GB currently available"
+      fi
+    fi
+  else
+    if [[ -f /proc/meminfo ]]; then
+      avail_mem_kb=$(awk '/^MemAvailable/{print $2}' /proc/meminfo)
+      echo "ℹ️  RAM  : $(( avail_mem_kb / 1024 / 1024 )) GB available (no per-job cap set)"
+    fi
+  fi
+  echo "────────────────────────────────────────────────"
 }
 
 _cleanup() {
@@ -306,9 +369,12 @@ run_mask_qc() {
     -p "$THREADS" 2>&1 | tee "$logfile"
 }
 
+check_resources
+
 # Run QC for each filter mask — at most MAX_JOBS containers concurrently
 mkdir -p "$OUTPUT_ABS/qc_runs"
 PIDS=()
+declare -A _MASK_FOR_PID _OUTDIR_FOR_PID
 
 _SEMFIFO="$(mktemp -u)"
 mkfifo "$_SEMFIFO"
@@ -321,24 +387,38 @@ for i in "${!MASKS[@]}"; do
   SAFE_MASK=$(echo "$MASK" | tr -c '[:alnum:]_.-' '_' | tr -s '_')
   OUTDIR="$OUTPUT_ABS/qc_runs/mask_${i}_${SAFE_MASK}"
   mkdir -p "$OUTDIR"
-  echo "[$((i + 1))/${#MASKS[@]}] $MASK"
+  echo "▶ [$((i + 1))/${#MASKS[@]}] $MASK"
   (
     trap 'printf " " >&3' EXIT  # release slot on subshell exit (normal or error)
     run_mask_qc "$MASK" "$OUTDIR"
   ) &
   PIDS+=("$!")
+  _MASK_FOR_PID["$!"]="$MASK"
+  _OUTDIR_FOR_PID["$!"]="$OUTDIR"
 done
 
-# Wait for all jobs and tally results
+# Wait for all jobs; report each result with mask name
 SUCCESS=0
+FAILED=0
 for pid in "${PIDS[@]}"; do
+  mask="${_MASK_FOR_PID[$pid]}"
+  outdir="${_OUTDIR_FOR_PID[$pid]}"
   if wait "$pid" 2>/dev/null; then
     SUCCESS=$((SUCCESS + 1))
-    echo "✅ $pid"
+    echo "✅ [$mask] completed"
+  else
+    ec=$?
+    FAILED=$((FAILED + 1))
+    if [[ $ec -eq 137 ]]; then
+      echo "❌ [$mask] KILLED — OOM (exit 137); raise mem_limit_per_job or reduce --jobs"
+    else
+      echo "❌ [$mask] FAILED (exit $ec) — see $outdir/run.log"
+    fi
   fi
 done
 
-echo "📊 $SUCCESS/${#PIDS[@]} succeeded"
+echo "📊 $SUCCESS/${#PIDS[@]} succeeded  |  $FAILED failed"
+[[ $FAILED -gt 0 ]] && exit 1
 
 # Integration moved to standalone helper to keep this script short and robust.
 INTEGRATOR_SCRIPT="$(dirname "$0")/integrate_mask_results.sh"
