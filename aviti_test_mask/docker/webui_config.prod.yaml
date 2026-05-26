@@ -1,0 +1,67 @@
+# Production webui_config.yaml — sample.
+#
+# Bind-mounted into the container at /app/webui/config/webui_config.yaml
+# via docker-compose's CONFIG_DIR volume. Operators edit this file on
+# the host; the container does NOT need a rebuild.
+#
+# Adjust the paths under "Storage paths" and "NAS" to match the actual
+# host bind-mount sources (declared in docker-compose.yml).
+#
+# Part of aviti_test_mask — VIB Nucleomics Core.
+
+app_name:      aviti_test_mask
+app_version:   "0.1.0"
+release_date:  "2026-05-26"
+org_name:      "VIB Nucleomics Core"
+support_email: "nucleomics@vib.be"
+
+# --- NAS ---
+# Inside the container the share is mounted at /data/nas; docker-compose
+# maps it to whatever host path the AVITI runs live on.
+nas_root:                /data/nas
+sequencer_subdirs_glob:  "AV*"
+run_folder_marker:       RunManifest.json
+run_folder_regex:        '^\d{8}_AV\d+_\d+(_\d+)+$'
+run_age_days:            3650
+deep_validate:           false
+
+# --- Storage paths ---
+# Path identity is required: this exact path must also exist on the
+# host (mapped by docker-compose). When the webui asks docker to
+# bind-mount /data/results/<job> into bases2fastq, the host daemon
+# resolves the path on the host, not in this container.
+results_root: /data/results
+jobs_dir:     /data/results
+db_path:      /data/results/jobs.db
+scripts_dir:  /app/scripts
+
+# --- Concurrency (production Ubuntu defaults) ---
+# Mac dev had 1/1/4. A real Linux host can comfortably run 3 outer
+# masks with 3 inner masks each at 8 threads per inner job. Adjust
+# downward if the host is shared with other workloads.
+max_global_containers: 3
+max_concurrent_jobs:   3
+max_jobs_per_user:     1
+max_inner_jobs:        3
+threads:               8
+
+# --- Web server ---
+# The container listens on 8765; docker-compose maps host 11006 to it.
+host: 0.0.0.0
+port: 8765
+
+# --- Retention (TODO — auto-purge not yet wired) ---
+retain_jobs_days:     90
+retain_jobs_min_keep: 20
+purge_on_each_request: false
+
+# --- Files (paths resolved relative to this YAML's location) ---
+users_file: users.yaml
+masks_file: /app/scripts/masks.yaml
+
+# --- Conda env activated by the bash scripts (already aliased in image) ---
+conda_env_name: aviti_test_mask_webui
+
+# Docker image to spawn for each mask QC. Pinning to an exact digest
+# is strongly recommended in production for reproducibility.
+docker_image: elembio/bases2fastq:latest

@@ -1,0 +1,53 @@
+# Build context limited to what the Dockerfile actually COPYs:
+# scripts/ and webui/.
+# Everything else is excluded to keep the build context small and to
+# avoid leaking secrets / dev clutter into the image.
+
+# --- top-level cruft ---
+.git
+.gitignore
+.DS_Store
+README*.md
+*.md
+archive/
+examples/
+dev_docs/
+assets/
+
+# --- runtime / generated state (NEVER bake into the image) ---
+results/
+*.db
+*.db-shm
+*.db-wal
+
+# --- python/conda artefacts ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- editor / OS ---
+.vscode/
+.idea/
+*.swp
+.envrc
+
+# --- the docker folder itself; the Dockerfile is given by -f anyway ---
+docker/
+
+# --- tests are not needed at runtime; trim them to keep image small ---
+webui/tests/
+
+# --- conda/pip envs that might be present locally ---
+webui/.conda/
+webui/venv/
+webui/.venv/
+
+# --- previous Dockerized builds ---
+*.tar
+*.tar.gz

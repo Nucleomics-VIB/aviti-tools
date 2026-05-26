@@ -1,0 +1,80 @@
+# docker-compose for the aviti_test_mask web UI.
+#
+# The webui runs in this single container; the bash worker shells out
+# to /usr/bin/docker (mounted from the host) to launch elembio/bases2fastq
+# as a SIBLING container on the host daemon (docker-out-of-docker).
+#
+# IMPORTANT — path identity:
+#   The webui (running INSIDE this container) tells the host docker
+#   daemon to bind-mount /data/results/<job_id>:/output when spawning
+#   bases2fastq. That path must exist on the HOST with the SAME content
+#   visible inside this container, otherwise bases2fastq writes into an
+#   empty in-VM directory and run.log shows "Permission denied".
+#   We achieve identity by mapping host:/data/results -> /data/results
+#   (same path on both sides). Same trick for the NAS mount.
+#
+# Part of aviti_test_mask — VIB Nucleomics Core.
+# Author: Stephane Plaisance <stephane.plaisance@vib.be>
+
+services:
+  webui:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        # Override at build time to match the host user that owns
+        # /data/results, e.g.:  docker compose build --build-arg APP_UID=1500
+        APP_UID: "${APP_UID:-1000}"
+        APP_GID: "${APP_GID:-1000}"
+    image: aviti_test_mask_webui:latest
+    container_name: aviti_test_mask_webui
+    restart: unless-stopped
+
+    # Host 11006 -> container 8765 (Flask app). Pick 11006 to fit the
+    # docker host's port allocation policy.
+    ports:
+      - "11006:8765"
+
+    # The two user-facing bind mounts the user asked for:
+    #
+    #   1. NAS share — read-only. Holds sequencer run folders.
+    #   2. Results dir — read-write. Holds session subdirs + jobs.db.
+    #
+    # Path identity (left == right) is mandatory for docker-out-of-docker
+    # to work — see header comment.
+    #
+    # The docker socket is plumbing, not user data — it lets the webui's
+    # worker spawn sibling bases2fastq containers on the host daemon.
+    #
+    # The deploy-time webui_config.yaml is bind-mounted read-only over
+    # the image's empty config folder, so operators can tune without a
+    # rebuild.
+    volumes:
+      # --- the two data mounts ---
+      - "${NAS_ROOT:-/data/nas}:/data/nas:ro"
+      - "${RESULTS_ROOT:-/data/results}:/data/results"
+      # --- deploy-time config ---
+      - "${CONFIG_DIR:-./config}:/app/webui/config:ro"
+      # --- docker-out-of-docker socket ---
+      - "/var/run/docker.sock:/var/run/docker.sock"
+
+    # Quick liveness probe; the image also defines HEALTHCHECK so this
+    # is mostly redundant but spelled out for the operator.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8765/api/v1/health | grep -q 'status'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+    # The container's group needs read on the docker socket. On
+    # Ubuntu the socket is gid=docker; passing it via the host gid
+    # avoids root inside the container.
+    group_add:
+      - "${DOCKER_GID:-999}"
+
+    # Read-only rootfs would be ideal but the conda env writes pyc
+    # files into site-packages on first import; leave rw for now.
+    tmpfs:
+      - /tmp:size=128m
+      - /run:size=8m
