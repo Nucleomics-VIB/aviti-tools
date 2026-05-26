@@ -27,7 +27,7 @@
             <tr>
               <th>Sequencer</th>
               <th>Run ID</th>
-              <th class="text-end">Modified</th>
+              <th class="text-end">Run start</th>
             </tr>
           </thead>
           <tbody id="runs-tbody">
@@ -91,6 +91,14 @@
     return d.toISOString().slice(0, 16).replace('T', ' ');
   }
 
+  function fmtRunStart(iso, fallbackEpoch) {
+    if (iso) {
+      const d = new Date(iso);
+      if (!isNaN(d.getTime())) return d.toISOString().slice(0, 16).replace('T', ' ');
+    }
+    return fmtDate(fallbackEpoch) + ' (mtime)';
+  }
+
   function cell(tag, text, cls) {
     const td = document.createElement('td');
     if (cls) td.className = cls;
@@ -133,10 +141,10 @@
         code.textContent = r.run_id;
         tdRun.appendChild(code);
         tr.appendChild(tdRun);
-        // Mtime
+        // Run start (from RunParameters.Date when available, else folder mtime)
         const tdM = document.createElement('td');
         tdM.className = 'text-end text-muted';
-        tdM.textContent = fmtDate(r.mtime);
+        tdM.textContent = fmtRunStart(r.run_start, r.mtime);
         tr.appendChild(tdM);
         tbody.appendChild(tr);
       }

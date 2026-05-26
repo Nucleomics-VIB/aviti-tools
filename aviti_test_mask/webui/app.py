@@ -17,7 +17,7 @@ from flask import Flask, jsonify, render_template, request
 
 from config_loader import env_config_path, load
 from db import JobsDAO
-from discovery import iter_validated, scan_nas_for_runs
+from discovery import iter_validated, read_run_start, scan_nas_for_runs
 from masks_loader import load_builtin_masks
 from users_loader import load_users
 
@@ -115,11 +115,16 @@ def create_app() -> Flask:
                 "sequencer": c.sequencer,
                 "path": str(c.path),
                 "mtime": c.mtime,
+                "run_start": None,   # filled lazily for the page slice only
                 "validated": False,
             }
             for c in candidates
         ]
         pag = _paginate(rows, page, per_page)
+        # Enrich only the slice the client will see with the precise
+        # instrument-reported start timestamp (RunParameters.Date).
+        for row in pag["items"]:
+            row["run_start"] = read_run_start(Path(row["path"]))
         return jsonify({
             "runs": pag["items"],
             "pagination": {k: v for k, v in pag.items() if k != "items"},
@@ -139,6 +144,7 @@ def create_app() -> Flask:
                 "sequencer": c.sequencer,
                 "path": str(c.path),
                 "mtime": c.mtime,
+                "run_start": None,
                 "_candidate": c,
             }
             for c in candidates
@@ -150,6 +156,7 @@ def create_app() -> Flask:
         for entry in pag["items"]:
             cand = entry.pop("_candidate")
             result = _validate(cand.path, cfg)
+            entry["run_start"] = read_run_start(cand.path)
             entry["meta"] = result["meta"]
             entry["first_failure"] = (
                 result["first_failure"]["name"]

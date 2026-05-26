@@ -144,6 +144,24 @@ def _expected_zip_set(cycles: dict[str, int]) -> set[str]:
     }
 
 
+def read_run_start(run_path: Path) -> str | None:
+    """Return the ISO-8601 start timestamp from RunParameters.json, or None.
+
+    The AVITI instrument writes a precise ``Date`` field at run start, e.g.
+    ``"2026-05-22T14:38:03.570108863Z"``. Cheap to parse — used to enrich
+    the run listing without committing to a full ``validate_run`` pass.
+    """
+    rp = run_path / "RunParameters.json"
+    try:
+        data = json.loads(rp.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    value = data.get("Date")
+    if not isinstance(value, str):
+        return None
+    return value
+
+
 def _zip_magic_ok(path: Path) -> bool:
     try:
         with path.open("rb") as fh:
