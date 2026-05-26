@@ -94,7 +94,10 @@
           <div class="form-check">
             <input class="form-check-input" type="radio" name="tiles_mode" value="default" id="tm_default"
                    {% if not clone or clone.tiles_mode == 'default' %}checked{% endif %}>
-            <label class="form-check-label" for="tm_default">Default (single tile, fast)</label>
+            <label class="form-check-label" for="tm_default">
+              First tile per lane (deterministic, fastest)
+              <span class="text-muted small">— always the same tile each submission</span>
+            </label>
           </div>
           <div class="form-check">
             <input class="form-check-input" type="radio" name="tiles_mode" value="all" id="tm_all"
