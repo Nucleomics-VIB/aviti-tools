@@ -1,0 +1,39 @@
+# Web UI configuration. Loaded in addition to the script's config.yaml.
+# All paths are absolute. Dev defaults point at the Mac NAS mount;
+# the Ubuntu production host will override these via its own copy.
+
+# --- NAS / run discovery ---
+nas_root: /Volumes/lvs/GBW-0047_NUC_Transfers/0003_Runs/Aviti
+sequencer_subdirs_glob: "AV*"
+run_folder_marker: RunManifest.json
+run_folder_regex: '^\d{8}_AV\d+_\d+_\d+$'
+run_age_days: 365
+deep_validate: false                       # gate optional zip magic-byte check
+
+# --- Storage paths ---
+results_root: /tmp/aviti_test_mask_results # dev default; chicken uses /data/analyses/aviti_test_mask
+jobs_dir: /tmp/aviti_test_mask_results     # same as results_root in single-user deploy
+db_path: /tmp/aviti_test_mask_results/jobs.db
+
+# --- Concurrency ---
+# Global cap on simultaneous bases2fastq containers across the whole host.
+# This is the binding limit; max_concurrent_jobs and max_inner_jobs only
+# shape how the 3 slots are distributed between users / inner masks.
+max_global_containers: 3
+max_concurrent_jobs: 3
+max_jobs_per_user: 1
+max_inner_jobs: 3
+threads: 8
+
+# --- Server ---
+host: 127.0.0.1
+port: 8765
+
+# --- Retention ---
+retain_jobs_days: 30
+retain_jobs_min_keep: 5
+purge_on_each_request: true
+
+# --- Files ---
+users_file: users.yaml
+masks_file: ../masks.yaml                  # reuse the script's mask list

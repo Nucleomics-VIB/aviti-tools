@@ -1,0 +1,12 @@
+# Edit this file to maintain the list of lab members allowed to submit jobs.
+# Each entry exposes one option in the UI's submitter dropdown.
+# Email is informational only (no notifications in v1).
+users:
+  - id: splaisan
+    display_name: Stephane Plaisance
+    email: stephane.plaisance@vib.be
+    admin: true
+  # - id: alice
+  #   display_name: Alice Example
+  #   email: alice@vib.be
+  #   admin: false
