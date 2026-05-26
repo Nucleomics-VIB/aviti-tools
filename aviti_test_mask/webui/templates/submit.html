@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}Submit — {{ run.run_id }}{% endblock %}
+
+{% block content %}
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for cat, msg in messages %}
+      <div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
+        {{ msg }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+      </div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h4 mb-1">▶ Submit QC suite</h1>
+    <div class="small text-muted">
+      <code>{{ run.run_id }}</code> ·
+      {{ run.instrument }} ·
+      {{ run.run_start }} ·
+      desc: {{ run.run_description or '—' }} ·
+      lanes: {{ run.analysis_lanes or '—' }}
+    </div>
+  </div>
+  <a href="/" class="btn btn-sm btn-outline-secondary">← Back to runs</a>
+</div>
+
+<form method="post" action="/submit/{{ run.run_internal_id }}" class="small">
+  <div class="row g-3">
+
+    <!-- Submitter -->
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header">👤 Submitter</div>
+        <div class="card-body">
+          <select name="submitter" class="form-select form-select-sm" required>
+            <option value="">— pick a user —</option>
+            {% for u in users %}
+              <option value="{{ u.id }}">{{ u.display_name }}{% if u.admin %} (admin){% endif %}</option>
+            {% endfor %}
+          </select>
+          <div class="form-text">Maintained in <code>users.yaml</code>.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lanes -->
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header">🛣 Lanes to test</div>
+        <div class="card-body">
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="lanes" value="all" id="lanes_all" checked>
+            <label class="form-check-label" for="lanes_all">Both (1+2)</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="lanes" value="1" id="lanes_1">
+            <label class="form-check-label" for="lanes_1">Lane 1 only</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="lanes" value="2" id="lanes_2">
+            <label class="form-check-label" for="lanes_2">Lane 2 only</label>
+          </div>
+          {% if lane_projects %}
+            <div class="form-text mt-2">
+              Projects on this run:
+              {% for lane, projects in lane_projects.items() %}
+                <span class="badge bg-secondary">L{{ lane }}: {{ projects|join(', ') }}</span>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Tile selection -->
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header">🎯 Tile selection</div>
+        <div class="card-body">
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="tiles_mode" value="default" id="tm_default" checked>
+            <label class="form-check-label" for="tm_default">Default (single tile, fast)</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="tiles_mode" value="all" id="tm_all">
+            <label class="form-check-label" for="tm_all">All tiles (slowest, most representative)</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="tiles_mode" value="lane" id="tm_lane">
+            <label class="form-check-label" for="tm_lane">All tiles of lane</label>
+            <input type="number" name="tiles_lane" value="1" min="1" max="2"
+                   class="form-control form-control-sm d-inline-block ms-2" style="width: 70px;">
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="tiles_mode" value="spread" id="tm_spread">
+            <label class="form-check-label" for="tm_spread">Spread (geometric N)</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="tiles_mode" value="random" id="tm_random">
+            <label class="form-check-label" for="tm_random">Random N tiles</label>
+          </div>
+          <div class="mt-2">
+            <label class="form-label small mb-0">N for spread / random:</label>
+            <input type="number" name="tiles_n" value="3" min="1" max="50"
+                   class="form-control form-control-sm" style="width: 90px;">
+          </div>
+          <details class="mt-2">
+            <summary class="small text-muted">Raw <code>--include-tile</code> pattern</summary>
+            <div class="form-check mt-1">
+              <input class="form-check-input" type="radio" name="tiles_mode" value="raw" id="tm_raw">
+              <label class="form-check-label" for="tm_raw">Pass a literal regex pattern</label>
+            </div>
+            <input type="text" name="tiles_raw" placeholder="e.g. L1R..C..S."
+                   class="form-control form-control-sm mt-1">
+          </details>
+        </div>
+      </div>
+    </div>
+
+    <!-- Masks -->
+    <div class="col-md-8">
+      <div class="card">
+        <div class="card-header">🧬 Masks to test</div>
+        <div class="card-body">
+          <div class="mb-2">
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="masks_source" value="builtin"
+                     id="ms_builtin" checked>
+              <label class="form-check-label" for="ms_builtin">From <code>masks.yaml</code></label>
+            </div>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="masks_source" value="typed" id="ms_typed">
+              <label class="form-check-label" for="ms_typed">Single typed mask</label>
+            </div>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="masks_source" value="uploaded" id="ms_up" disabled>
+              <label class="form-check-label text-muted" for="ms_up">Upload file (coming next)</label>
+            </div>
+          </div>
+          <div id="ms_builtin_block">
+            {% for m in masks %}
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="builtin_masks" value="{{ m.text }}"
+                       id="m_{{ loop.index }}" checked>
+                <label class="form-check-label" for="m_{{ loop.index }}"><code>{{ m.text }}</code></label>
+              </div>
+            {% endfor %}
+          </div>
+          <div id="ms_typed_block" class="d-none">
+            <input type="text" name="typed_mask" placeholder="R1:Y12N*-R2:Y12N*"
+                   class="form-control form-control-sm">
+            <div class="form-text">One mask, regex: <code>^R1:[YN0-9*]+-R2:[YN0-9*]+$</code>.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Advanced -->
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header">⚙️ Execution params</div>
+        <div class="card-body">
+          <label class="form-label small mb-0">Threads per mask (-p)</label>
+          <input type="number" name="threads" value="{{ defaults.threads }}" min="1" max="48"
+                 class="form-control form-control-sm">
+          <label class="form-label small mb-0 mt-2">Concurrent masks (-j)</label>
+          <input type="number" name="max_jobs" value="{{ defaults.max_inner_jobs }}" min="1" max="9"
+                 class="form-control form-control-sm">
+          <label class="form-label small mb-0 mt-2">Mem limit per job</label>
+          <input type="text" name="mem_limit" placeholder="e.g. 16g" class="form-control form-control-sm">
+          <div class="form-check mt-2">
+            <input class="form-check-input" type="checkbox" name="cache_input" id="cache_input" value="1">
+            <label class="form-check-label" for="cache_input">--cache-input (stage to /dev/shm)</label>
+          </div>
+          <label class="form-label small mb-0 mt-2">Docker image</label>
+          <input type="text" name="docker_image" value="{{ defaults.docker_image }}" class="form-control form-control-sm">
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="d-flex justify-content-end mt-3">
+    <a href="/" class="btn btn-secondary btn-sm me-2">Cancel</a>
+    <button type="submit" class="btn btn-primary btn-sm">▶ Queue job</button>
+  </div>
+
+  <p class="text-muted small mt-2 mb-0">
+    Worker not yet implemented — submitting will create a <code>queued</code> row in the
+    SQLite jobs table so you can see the form flow + DB state.
+  </p>
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  // Show/hide mask blocks based on radio selection.
+  const builtin = document.getElementById('ms_builtin_block');
+  const typed = document.getElementById('ms_typed_block');
+  function sync() {
+    const v = document.querySelector('input[name="masks_source"]:checked').value;
+    builtin.classList.toggle('d-none', v !== 'builtin');
+    typed.classList.toggle('d-none', v !== 'typed');
+  }
+  document.querySelectorAll('input[name="masks_source"]').forEach(el => el.addEventListener('change', sync));
+  sync();
+})();
+</script>
+{% endblock %}

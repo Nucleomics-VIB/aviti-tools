@@ -237,23 +237,31 @@
         tdM.className = 'text-end text-muted';
         tdM.textContent = fmtRunStart(r.run_start, r.mtime);
         tr.appendChild(tdM);
-        // Info link → opens the manifest modal
-        const tdInfo = document.createElement('td');
-        tdInfo.className = 'text-end';
+        // Actions: Info modal + Submit (config page)
+        const tdAct = document.createElement('td');
+        tdAct.className = 'text-end text-nowrap';
         if (r.run_internal_id) {
-          const link = document.createElement('a');
-          link.href = '#';
-          link.className = 'btn btn-sm btn-outline-secondary py-0';
-          link.textContent = 'Info';
-          link.addEventListener('click', (ev) => {
+          const info = document.createElement('a');
+          info.href = '#';
+          info.className = 'btn btn-sm btn-outline-secondary py-0 me-1';
+          info.textContent = 'Info';
+          info.addEventListener('click', (ev) => {
             ev.preventDefault();
             openRunModal(r.run_internal_id, r.run_id);
           });
-          tdInfo.appendChild(link);
+          tdAct.appendChild(info);
+          if (r.valid) {
+            const submit = document.createElement('a');
+            submit.href = '/submit/' + encodeURIComponent(r.run_internal_id);
+            submit.className = 'btn btn-sm btn-primary py-0';
+            submit.textContent = '▶ Submit';
+            submit.title = 'Configure and queue a QC suite against this run';
+            tdAct.appendChild(submit);
+          }
         } else {
-          tdInfo.innerHTML = '<span class="text-muted small">—</span>';
+          tdAct.innerHTML = '<span class="text-muted small">—</span>';
         }
-        tr.appendChild(tdInfo);
+        tr.appendChild(tdAct);
         tbody.appendChild(tr);
       }
     }

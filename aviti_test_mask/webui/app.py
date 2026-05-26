@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, abort, flash, jsonify, redirect, render_template, request, url_for
 
 from config_loader import env_config_path, load
 from db import JobsDAO, RunsMetadataDAO
@@ -28,6 +28,9 @@ from users_loader import load_users
 def create_app() -> Flask:
     cfg = load(env_config_path())
     app = Flask(__name__, static_folder="static", template_folder="templates")
+    # Flash needs a secret. Dev-only: ephemeral key tied to the process.
+    import secrets as _secrets
+    app.secret_key = _secrets.token_hex(16)
     app.config["WEBUI_CONFIG"] = cfg
     app.config["DAO"] = JobsDAO(cfg.db_path)
     app.config["RUNS_DAO"] = RunsMetadataDAO(cfg.db_path)
@@ -49,6 +52,105 @@ def create_app() -> Flask:
     @app.get("/about")
     def about():
         return render_template("about.html")
+
+    @app.get("/submit/<run_internal_id>")
+    def submit_form(run_internal_id: str):
+        runs_dao: RunsMetadataDAO = app.config["RUNS_DAO"]
+        run = runs_dao.get(run_internal_id)
+        if run is None:
+            abort(404)
+        users = load_users(cfg.users_file)
+        masks = load_builtin_masks(cfg.masks_file)
+        import json as _json
+        lane_projects = _json.loads(run.get("lane_projects_json") or "{}")
+        return render_template(
+            "submit.html",
+            run=run,
+            users=users,
+            masks=masks,
+            lane_projects=lane_projects,
+            defaults={
+                "threads": cfg.threads,
+                "max_inner_jobs": cfg.max_inner_jobs,
+                "docker_image": cfg.raw.get("docker_image", "elembio/bases2fastq:latest"),
+            },
+        )
+
+    @app.post("/submit/<run_internal_id>")
+    def submit_post(run_internal_id: str):
+        runs_dao: RunsMetadataDAO = app.config["RUNS_DAO"]
+        dao: JobsDAO = app.config["DAO"]
+        run = runs_dao.get(run_internal_id)
+        if run is None:
+            abort(404)
+        from db import JobRecord, utc_now_iso
+        import json as _json
+        import uuid
+
+        form = request.form
+        submitter = (form.get("submitter") or "").strip()
+        if not submitter:
+            flash("Submitter is required.", "danger")
+            return redirect(url_for("submit_form", run_internal_id=run_internal_id))
+
+        masks_source = form.get("masks_source", "builtin")
+        masks_list: list[str] = []
+        if masks_source == "builtin":
+            masks_list = form.getlist("builtin_masks")
+        elif masks_source == "typed":
+            t = (form.get("typed_mask") or "").strip()
+            if t:
+                masks_list = [t]
+        # uploaded mode would parse the uploaded file — deferred.
+
+        if not masks_list:
+            flash("Pick at least one mask.", "danger")
+            return redirect(url_for("submit_form", run_internal_id=run_internal_id))
+
+        tiles_mode = form.get("tiles_mode", "default")
+        tiles_spec = ""
+        if tiles_mode == "all":
+            tiles_spec = "all"
+        elif tiles_mode == "lane":
+            tiles_spec = f"lane:{form.get('tiles_lane') or '1'}"
+        elif tiles_mode == "spread":
+            tiles_spec = f"spread:{form.get('tiles_n') or '3'}"
+        elif tiles_mode == "random":
+            tiles_spec = f"random:{form.get('tiles_n') or '3'}"
+        elif tiles_mode == "raw":
+            tiles_spec = (form.get("tiles_raw") or "").strip()
+
+        lanes = form.get("lanes", "all")
+        lane_projects = _json.loads(run.get("lane_projects_json") or "{}")
+        # Future: respect user overrides; for v1 we just persist what's in DB.
+
+        job_id = f"{run['run_id']}__{utc_now_iso().replace(':','-')}__{uuid.uuid4().hex[:6]}"
+        record = JobRecord(
+            job_id=job_id,
+            submitter=submitter,
+            run_id=run["run_id"],
+            run_path=run["run_path"],
+            params_json=_json.dumps({
+                "lanes": lanes,
+                "tiles_mode": tiles_mode,
+                "tiles_spec": tiles_spec,
+            }),
+            masks_source=masks_source,
+            masks_json=_json.dumps(masks_list),
+            state="queued",
+            cache_input=1 if form.get("cache_input") else 0,
+            threads=int(form.get("threads") or cfg.threads),
+            max_jobs=int(form.get("max_jobs") or cfg.max_inner_jobs),
+            docker_image=form.get("docker_image") or cfg.raw.get("docker_image", ""),
+            submitted_at=utc_now_iso(),
+            mask_count=len(masks_list),
+            tiles_spec=tiles_spec,
+            mem_limit_per_job=form.get("mem_limit") or None,
+            run_internal_id=run_internal_id,
+        )
+        dao.insert(record)
+        flash(f"Job {job_id} queued. (Worker not yet implemented — row created in DB.)", "success")
+        return redirect(url_for("submit_form", run_internal_id=run_internal_id))
 
     @app.get("/api/v1/health")
     def health():
