@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from discovery import (
+from services.discovery import (
     check_nas_mount, extract_projects_from_run_id, is_test_run,
     resolve_tile_spec, scan_nas_for_runs, validate_run,
 )

@@ -1,4 +1,4 @@
-from masks_loader import (
+from services.masks_loader import (
     MASK_REGEX, is_valid_mask, parse_typed_mask, parse_uploaded_masks,
 )
 

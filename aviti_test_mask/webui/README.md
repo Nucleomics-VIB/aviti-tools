@@ -1,37 +1,23 @@
 # aviti_test_mask — web UI
 
-Backend foundation for the web UI described in
+Web UI for the AVITI mask-suite QC tool described in
 [../dev_docs/plan_webui.md](../dev_docs/plan_webui.md).
 
 Part of **aviti_test_mask** — VIB Nucleomics Core.
 Author: Stephane Plaisance ([stephane.plaisance@vib.be](mailto:stephane.plaisance@vib.be))
 
-## v1 scope
-
-Read-only HTTP API:
-- `GET /api/v1/health` — server liveness + NAS mount status.
-- `GET /api/v1/config` — current webui_config.yaml.
-- `GET /api/v1/users` — users.yaml as JSON.
-- `GET /api/v1/masks` — built-in masks from `../masks.yaml`.
-- `GET /api/v1/runs` — candidate runs (name + mtime only, fast).
-- `GET /api/v1/runs/validated` — same list, each run deep-validated.
-
-Job submission, queue, history, and HTML pages land in subsequent
-iterations.
-
 ## Setup
 
 Hard rule: **every** dependency — Python packages and unix tools alike —
-lives in a dedicated conda env. The host is assumed to provide only
-`bash` and `docker`; anything else (`parallel`, `awk`, `sed`, `jq`,
-`yq`, `realpath`, …) ships from `environment.yml`. Adding a new tool
-means adding it to the env, never `apt install`-ing on the host.
+lives in a dedicated conda env. The host provides only `bash` and
+`docker`; anything else (`parallel`, `gawk`, `sed`, `jq`, `yq`,
+`coreutils`, …) ships from `environment.yml`.
 
 ```bash
 cd webui
-make env                    # one-time
+make env                       # one-time
 conda activate aviti_test_mask_webui
-make run                    # http://127.0.0.1:8765/api/v1/health
+make run                       # http://127.0.0.1:8765/
 ```
 
 Override the config path:
@@ -46,23 +32,40 @@ AVITI_WEBUI_CONFIG=/path/to/custom.yaml make run
 make test
 ```
 
-Discovery tests build synthetic AVITI run trees in `tmp_path`, so they
-run without a real NAS. The DB tests use SQLite in `tmp_path` and don't
-need any external service.
-
 ## Layout
 
 ```
 webui/
-  environment.yml        # conda env spec
-  Makefile               # env / run / test wrappers
-  webui_config.yaml      # dev defaults (Mac NAS mount)
-  users.yaml             # lab-member allowlist
-  app.py                 # Flask routes
-  config_loader.py       # WebUIConfig dataclass
-  discovery.py           # scan + validate
-  db.py                  # SQLite DAO (schema v1)
-  masks_loader.py        # builtin / uploaded / typed mask parsing
-  users_loader.py        # users.yaml parsing
-  tests/                 # pytest suite
+  app.py                       # slim Flask entry — create_app() + worker boot
+  Makefile                     # env / run / test wrappers
+  environment.yml              # conda env spec (Python + unix tools)
+  config/                      # bind-mount target in Docker
+    webui_config.yaml          # tunables (NAS path, concurrency, retention, …)
+    users.yaml                 # lab-member allowlist
+  services/                    # pure domain logic (no Flask imports)
+    config_loader.py           # WebUIConfig dataclass + YAML loader
+    db.py                      # SQLite DAOs (JobsDAO, RunsMetadataDAO)
+    job_worker.py              # background thread spawning aviti_test_mask.sh
+    masks_loader.py            # builtin / uploaded / typed mask parsing
+    users_loader.py            # users.yaml parsing
+    discovery/                 # NAS scan + validation + metadata + tile resolver
+      scan.py                  # scan_nas_for_runs, check_nas_mount, …
+      validation.py            # validate_run, iter_validated
+      metadata.py              # read_run_metadata, read_run_start
+      tiles.py                 # resolve_tile_spec
+  routes/                      # Flask blueprints (HTTP layer only)
+    pages.py                   # /, /about, /queue, /submit/<id>, /resubmit/<id>
+    api_misc.py                # /api/v1/health|config|users|masks
+    api_runs.py                # /api/v1/runs[/<id>|/validated]
+    api_jobs.py                # /api/v1/queue + /api/v1/jobs/*
+  templates/                   # Jinja2 (extends base.html)
+  static/                      # css / js / VIB logos
+  tests/                       # pytest suite (39 tests)
 ```
+
+Bash scripts (`aviti_test_mask.sh`, `integrate_mask_results.sh`) and
+their YAMLs live in `../scripts/` at the project root. The worker
+resolves them via `WebUIConfig.scripts_dir`.
+
+The empty `../docker/` folder holds the planned Dockerfile +
+compose layout — see [`../docker/README.md`](../docker/README.md).

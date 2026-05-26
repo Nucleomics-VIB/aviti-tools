@@ -49,6 +49,7 @@ class WebUIConfig:
 
     users_file: Path
     masks_file: Path
+    scripts_dir: Path
 
     raw: dict = field(default_factory=dict)
 
@@ -104,6 +105,9 @@ def load(path: str | Path) -> WebUIConfig:
         purge_on_each_request=bool(raw["purge_on_each_request"]),
         users_file=_resolve(base, raw["users_file"]),
         masks_file=_resolve(base, raw["masks_file"]),
+        # Default scripts_dir: project-root scripts/ relative to the YAML.
+        # Production YAMLs override this with an absolute /app/scripts.
+        scripts_dir=_resolve(base, raw.get("scripts_dir", "../../scripts")),
         raw=raw,
     )
 
@@ -117,4 +121,7 @@ def load(path: str | Path) -> WebUIConfig:
 
 
 def env_config_path() -> Path:
-    return Path(os.environ.get("AVITI_WEBUI_CONFIG", Path(__file__).parent / "webui_config.yaml"))
+    # Default location: webui/config/webui_config.yaml — i.e. two levels up
+    # from this file (services/) plus config/.
+    default = Path(__file__).resolve().parent.parent / "config" / "webui_config.yaml"
+    return Path(os.environ.get("AVITI_WEBUI_CONFIG", default))

@@ -48,6 +48,7 @@ retain_jobs_days: 30
 retain_jobs_min_keep: 5
 purge_on_each_request: true
 
-# --- Files ---
+# --- Files (paths resolved relative to this YAML's location) ---
 users_file: users.yaml
-masks_file: ../masks.yaml                  # reuse the script's mask list
+masks_file: ../../scripts/masks.yaml       # reuse the bash script's mask list
+scripts_dir: ../../scripts                 # where aviti_test_mask.sh lives

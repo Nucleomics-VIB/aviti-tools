@@ -34,8 +34,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from config_loader import WebUIConfig
-from db import JobsDAO, utc_now_iso
+from .config_loader import WebUIConfig
+from .db import JobsDAO, utc_now_iso
 
 log = logging.getLogger("job_worker")
 
@@ -90,10 +90,7 @@ class JobWorker:
                  script_path: Path | None = None):
         self.cfg = cfg
         self.dao = dao
-        self.script_path = (
-            script_path
-            or Path(__file__).resolve().parent.parent / "aviti_test_mask.sh"
-        )
+        self.script_path = script_path or (cfg.scripts_dir / "aviti_test_mask.sh")
         self._active: dict[str, _ActiveJob] = {}
         self._lock = threading.Lock()
         self._stop = threading.Event()

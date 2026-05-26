@@ -1,4 +1,4 @@
-from db import JobsDAO, JobRecord, utc_now_iso
+from services.db import JobsDAO, JobRecord, utc_now_iso
 
 import pytest
 
