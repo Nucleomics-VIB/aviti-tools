@@ -63,12 +63,43 @@ def create_app() -> Flask:
         masks = load_builtin_masks(cfg.masks_file)
         import json as _json
         lane_projects = _json.loads(run.get("lane_projects_json") or "{}")
+
+        # Optional pre-fill from an existing job (Re-submit / clone).
+        clone_id = request.args.get("clone")
+        clone: dict | None = None
+        if clone_id:
+            jobs_dao: JobsDAO = app.config["DAO"]
+            src = jobs_dao.get(clone_id)
+            if src:
+                try:
+                    params = _json.loads(src.get("params_json") or "{}")
+                except _json.JSONDecodeError:
+                    params = {}
+                try:
+                    masks_list = _json.loads(src.get("masks_json") or "[]")
+                except _json.JSONDecodeError:
+                    masks_list = []
+                clone = {
+                    "submitter": src.get("submitter"),
+                    "masks_source": src.get("masks_source"),
+                    "masks": masks_list,
+                    "tiles_mode": params.get("tiles_mode", "default"),
+                    "tiles_spec": src.get("tiles_spec") or "",
+                    "lanes": params.get("lanes", "all"),
+                    "threads": src.get("threads"),
+                    "max_jobs": src.get("max_jobs"),
+                    "cache_input": src.get("cache_input"),
+                    "mem_limit_per_job": src.get("mem_limit_per_job"),
+                    "docker_image": src.get("docker_image"),
+                }
+
         return render_template(
             "submit.html",
             run=run,
             users=users,
             masks=masks,
             lane_projects=lane_projects,
+            clone=clone,
             defaults={
                 "threads": cfg.threads,
                 "max_inner_jobs": cfg.max_inner_jobs,
@@ -156,23 +187,34 @@ def create_app() -> Flask:
     def queue_page():
         return render_template("queue.html")
 
-    @app.get("/api/v1/queue")
-    def get_queue():
+    def _sorted_queue_jobs() -> list[dict]:
+        """Active jobs in display order — running first, then queue order."""
         dao: JobsDAO = app.config["DAO"]
-        rows, total = dao.list(
-            states=["queued", "running", "stopping", "integrating"],
-            limit=200,
+        rows, _ = dao.list(
+            states=["queued", "paused", "running", "stopping", "integrating"],
+            limit=500,
             order_by="submitted_at ASC",
         )
-        # Compute simple 1-based queue position for the queued ones.
-        pos = 0
-        for r in rows:
-            if r["state"] == "queued":
-                pos += 1
-                r["queue_position"] = pos
-            else:
-                r["queue_position"] = None
-        return jsonify({"jobs": rows, "total": total})
+        # Active jobs (running/integrating/stopping) go on top, with no
+        # position number. The remaining queued+paused rows keep their
+        # submission order — Move up/down + Start now rewrite submitted_at
+        # to reorder, so this stays as the canonical ordering.
+        active_states = {"running", "integrating", "stopping"}
+        active = [r for r in rows if r["state"] in active_states]
+        waiting = [r for r in rows if r["state"] not in active_states]
+        ordered: list[dict] = []
+        for r in active:
+            r["queue_position"] = None
+            ordered.append(r)
+        for i, r in enumerate(waiting, start=1):
+            r["queue_position"] = i
+            ordered.append(r)
+        return ordered
+
+    @app.get("/api/v1/queue")
+    def get_queue():
+        jobs = _sorted_queue_jobs()
+        return jsonify({"jobs": jobs, "total": len(jobs)})
 
     @app.delete("/api/v1/jobs/<job_id>")
     def delete_job(job_id: str):
@@ -193,6 +235,127 @@ def create_app() -> Flask:
             # so we just mark state for now).
             dao.update(job_id, state="stopping", cancelled_by=row["submitter"])
         return jsonify({"ok": True})
+
+    @app.post("/api/v1/jobs/<job_id>/pause")
+    def pause_job(job_id: str):
+        dao: JobsDAO = app.config["DAO"]
+        row = dao.get(job_id)
+        if row is None:
+            return jsonify({"error": "unknown job"}), 404
+        if row["state"] != "queued":
+            return jsonify({"error": f"can only pause queued jobs (state={row['state']})"}), 409
+        dao.update(job_id, state="paused")
+        return jsonify({"ok": True})
+
+    @app.post("/api/v1/jobs/<job_id>/resume")
+    def resume_job(job_id: str):
+        dao: JobsDAO = app.config["DAO"]
+        row = dao.get(job_id)
+        if row is None:
+            return jsonify({"error": "unknown job"}), 404
+        if row["state"] != "paused":
+            return jsonify({"error": f"can only resume paused jobs (state={row['state']})"}), 409
+        dao.update(job_id, state="queued")
+        return jsonify({"ok": True})
+
+    def _adjust_submitted_at(job_id: str, ref_time: str | None) -> None:
+        """Rewrite a job's submitted_at to control queue ordering.
+
+        Move semantics use submitted_at as the canonical ordering key, so
+        promoting a job to the front means setting its submitted_at to
+        just before the current first entry. We bump to one microsecond
+        earlier to keep the ISO-8601 string monotonic vs the neighbour.
+        """
+        dao: JobsDAO = app.config["DAO"]
+        if ref_time is None:
+            return
+        dao.update(job_id, started_at=None)  # no-op, but keeps the noqa happy
+        # Direct field assignment via update():
+        from db import utc_now_iso  # noqa: F401  (kept for readability)
+        # Actually do the update:
+        with dao._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute("UPDATE jobs SET submitted_at=? WHERE job_id=?",
+                         (ref_time, job_id))
+
+    @app.post("/api/v1/jobs/<job_id>/start_now")
+    def start_now(job_id: str):
+        dao: JobsDAO = app.config["DAO"]
+        row = dao.get(job_id)
+        if row is None:
+            return jsonify({"error": "unknown job"}), 404
+        if row["state"] not in ("queued", "paused"):
+            return jsonify({"error": f"cannot promote state={row['state']}"}), 409
+        # Find the earliest submitted_at among queued/paused and set
+        # this job to one second before it. If it's already first, no-op.
+        jobs = _sorted_queue_jobs()
+        waiting = [j for j in jobs if j["state"] in ("queued", "paused")
+                   and j["job_id"] != job_id]
+        if not waiting:
+            return jsonify({"ok": True, "note": "already alone in queue"})
+        from datetime import datetime, timedelta
+        earliest = waiting[0]["submitted_at"]
+        new_ts = (datetime.strptime(earliest, "%Y-%m-%dT%H:%M:%SZ")
+                  - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with dao._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute("UPDATE jobs SET submitted_at=? WHERE job_id=?",
+                         (new_ts, job_id))
+        # Resume if it was paused so it actually leaves the queue when a
+        # worker picks up the front.
+        if row["state"] == "paused":
+            dao.update(job_id, state="queued")
+        return jsonify({"ok": True, "new_submitted_at": new_ts})
+
+    @app.post("/api/v1/jobs/<job_id>/move")
+    def move_job(job_id: str):
+        try:
+            delta = int(request.args.get("delta", "0"))
+        except ValueError:
+            return jsonify({"error": "delta must be ±1"}), 400
+        if delta not in (-1, 1):
+            return jsonify({"error": "delta must be ±1"}), 400
+        dao: JobsDAO = app.config["DAO"]
+        row = dao.get(job_id)
+        if row is None:
+            return jsonify({"error": "unknown job"}), 404
+        if row["state"] not in ("queued", "paused"):
+            return jsonify({"error": f"cannot move state={row['state']}"}), 409
+        jobs = _sorted_queue_jobs()
+        waiting = [j for j in jobs if j["state"] in ("queued", "paused")]
+        idx = next((i for i, j in enumerate(waiting) if j["job_id"] == job_id), -1)
+        if idx < 0:
+            return jsonify({"error": "job not in waiting set"}), 409
+        target = idx + delta
+        if target < 0 or target >= len(waiting):
+            return jsonify({"error": "out of range"}), 409
+        # Swap submitted_at with the neighbour.
+        neighbour = waiting[target]
+        a_ts, b_ts = row["submitted_at"], neighbour["submitted_at"]
+        # If neighbour's submitted_at equals row's (rare second-precision
+        # collision), shift one by a second to break the tie.
+        if a_ts == b_ts:
+            from datetime import datetime, timedelta
+            shifted = (datetime.strptime(a_ts, "%Y-%m-%dT%H:%M:%SZ")
+                       + timedelta(seconds=delta)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            a_ts = shifted
+        with dao._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute("UPDATE jobs SET submitted_at=? WHERE job_id=?",
+                         (b_ts, job_id))
+            conn.execute("UPDATE jobs SET submitted_at=? WHERE job_id=?",
+                         (a_ts, neighbour["job_id"]))
+        return jsonify({"ok": True})
+
+    @app.get("/resubmit/<job_id>")
+    def resubmit(job_id: str):
+        dao: JobsDAO = app.config["DAO"]
+        row = dao.get(job_id)
+        if row is None:
+            abort(404)
+        if not row.get("run_internal_id"):
+            flash("Original job has no linked run — cannot re-submit.", "danger")
+            return redirect(url_for("queue_page"))
+        return redirect(url_for("submit_form",
+                                run_internal_id=row["run_internal_id"],
+                                clone=job_id))
 
     @app.post("/api/v1/queue/clear")
     def clear_queue():

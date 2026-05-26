@@ -87,6 +87,7 @@
   function statePill(state) {
     const map = {
       queued:      'bg-secondary',
+      paused:      'bg-warning text-dark',
       running:     'bg-primary',
       integrating: 'bg-info text-dark',
       stopping:    'bg-warning text-dark',
@@ -95,6 +96,27 @@
     span.className = 'badge ' + (map[state] || 'bg-light text-dark border');
     span.textContent = state;
     return span;
+  }
+
+  function actionBtn(label, title, cls, onclick, disabled) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn btn-sm py-0 ' + cls;
+    b.textContent = label;
+    b.title = title;
+    if (disabled) b.disabled = true;
+    else b.addEventListener('click', onclick);
+    return b;
+  }
+
+  async function postAction(path, method) {
+    const r = await fetch(path, { method: method || 'POST' });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      alert('Error: ' + (e.error || r.status));
+      return false;
+    }
+    return true;
   }
 
   async function fetchQueue() {
@@ -135,14 +157,59 @@
       const tdState = document.createElement('td');
       tdState.appendChild(statePill(r.state));
       tr.appendChild(tdState);
-      // Delete action
+      // Action group: up / down / start-now / pause-resume / re-submit / cancel-stop
       const tdAct = document.createElement('td');
-      tdAct.className = 'text-end';
+      tdAct.className = 'text-end text-nowrap';
+      const grp = document.createElement('div');
+      grp.className = 'btn-group';
+
+      const waiting = (r.state === 'queued' || r.state === 'paused');
+      const waitingList = lastRows.filter(x => x.state === 'queued' || x.state === 'paused');
+      const idx = waitingList.findIndex(x => x.job_id === r.job_id);
+      const isFirst = waiting && idx === 0;
+      const isLast = waiting && idx === waitingList.length - 1;
+
+      if (waiting) {
+        // Move up
+        grp.appendChild(actionBtn('↑', 'Move up', 'btn-outline-secondary',
+          async () => { if (await postAction('/api/v1/jobs/' + r.job_id + '/move?delta=-1')) reload(); },
+          isFirst));
+        // Move down
+        grp.appendChild(actionBtn('↓', 'Move down', 'btn-outline-secondary',
+          async () => { if (await postAction('/api/v1/jobs/' + r.job_id + '/move?delta=1')) reload(); },
+          isLast));
+        // Start now
+        grp.appendChild(actionBtn('⚡', 'Start now (jump to top)', 'btn-outline-primary',
+          async () => { if (await postAction('/api/v1/jobs/' + r.job_id + '/start_now')) reload(); },
+          isFirst && r.state === 'queued'));
+        // Pause / Resume
+        if (r.state === 'queued') {
+          grp.appendChild(actionBtn('⏸', 'Pause (worker will skip)', 'btn-outline-warning',
+            async () => { if (await postAction('/api/v1/jobs/' + r.job_id + '/pause')) reload(); }));
+        } else {
+          grp.appendChild(actionBtn('▶', 'Resume', 'btn-outline-success',
+            async () => { if (await postAction('/api/v1/jobs/' + r.job_id + '/resume')) reload(); }));
+        }
+      }
+
+      // Re-submit (always available — even from running jobs)
+      const re = document.createElement('a');
+      re.className = 'btn btn-sm btn-outline-secondary py-0';
+      re.title = 'Open Submit form pre-filled with these params';
+      re.textContent = '📋';
+      re.href = '/resubmit/' + encodeURIComponent(r.job_id);
+      grp.appendChild(re);
+
+      // Cancel / Stop (destructive — last button)
       const del = document.createElement('button');
+      del.type = 'button';
       del.className = 'btn btn-sm btn-outline-danger py-0';
-      del.textContent = r.state === 'queued' ? 'Cancel' : 'Stop';
+      del.textContent = waiting ? 'Cancel' : 'Stop';
+      del.title = waiting ? 'Remove from queue' : 'Stop running job (graceful)';
       del.addEventListener('click', () => deleteJob(r.job_id, r.state));
-      tdAct.appendChild(del);
+      grp.appendChild(del);
+
+      tdAct.appendChild(grp);
       tr.appendChild(tdAct);
       tbody.appendChild(tr);
     }

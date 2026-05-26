@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 """
 
 VALID_STATES = {
-    "queued", "running", "integrating",
+    "queued", "paused", "running", "integrating",
     "stopping", "done", "failed", "cancelled", "deleted",
 }
 

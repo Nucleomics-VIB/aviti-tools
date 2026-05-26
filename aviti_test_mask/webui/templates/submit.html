@@ -2,6 +2,11 @@
 {% block title %}Submit — {{ run.run_id }}{% endblock %}
 
 {% block content %}
+{% if clone %}
+<div class="alert alert-info py-2 small mb-3">
+  Pre-filled from a previous job. Tweak settings as needed before queuing.
+</div>
+{% endif %}
 {% with messages = get_flashed_messages(with_categories=true) %}
   {% if messages %}
     {% for cat, msg in messages %}
@@ -38,7 +43,10 @@
           <select name="submitter" class="form-select form-select-sm" required>
             <option value="">— pick a user —</option>
             {% for u in users %}
-              <option value="{{ u.id }}">{{ u.display_name }}{% if u.admin %} (admin){% endif %}</option>
+              <option value="{{ u.id }}"
+                      {% if clone and clone.submitter == u.id %}selected{% endif %}>
+                {{ u.display_name }}{% if u.admin %} (admin){% endif %}
+              </option>
             {% endfor %}
           </select>
           <div class="form-text">Maintained in <code>users.yaml</code>.</div>
@@ -52,15 +60,18 @@
         <div class="card-header">🛣 Lanes to test</div>
         <div class="card-body">
           <div class="form-check">
-            <input class="form-check-input" type="radio" name="lanes" value="all" id="lanes_all" checked>
+            <input class="form-check-input" type="radio" name="lanes" value="all" id="lanes_all"
+                   {% if not clone or clone.lanes == 'all' %}checked{% endif %}>
             <label class="form-check-label" for="lanes_all">Both (1+2)</label>
           </div>
           <div class="form-check">
-            <input class="form-check-input" type="radio" name="lanes" value="1" id="lanes_1">
+            <input class="form-check-input" type="radio" name="lanes" value="1" id="lanes_1"
+                   {% if clone and clone.lanes == '1' %}checked{% endif %}>
             <label class="form-check-label" for="lanes_1">Lane 1 only</label>
           </div>
           <div class="form-check">
-            <input class="form-check-input" type="radio" name="lanes" value="2" id="lanes_2">
+            <input class="form-check-input" type="radio" name="lanes" value="2" id="lanes_2"
+                   {% if clone and clone.lanes == '2' %}checked{% endif %}>
             <label class="form-check-label" for="lanes_2">Lane 2 only</label>
           </div>
           {% if lane_projects %}
@@ -81,25 +92,30 @@
         <div class="card-header">🎯 Tile selection</div>
         <div class="card-body">
           <div class="form-check">
-            <input class="form-check-input" type="radio" name="tiles_mode" value="default" id="tm_default" checked>
+            <input class="form-check-input" type="radio" name="tiles_mode" value="default" id="tm_default"
+                   {% if not clone or clone.tiles_mode == 'default' %}checked{% endif %}>
             <label class="form-check-label" for="tm_default">Default (single tile, fast)</label>
           </div>
           <div class="form-check">
-            <input class="form-check-input" type="radio" name="tiles_mode" value="all" id="tm_all">
+            <input class="form-check-input" type="radio" name="tiles_mode" value="all" id="tm_all"
+                   {% if clone and clone.tiles_mode == 'all' %}checked{% endif %}>
             <label class="form-check-label" for="tm_all">All tiles (slowest, most representative)</label>
           </div>
           <div class="form-check">
-            <input class="form-check-input" type="radio" name="tiles_mode" value="lane" id="tm_lane">
+            <input class="form-check-input" type="radio" name="tiles_mode" value="lane" id="tm_lane"
+                   {% if clone and clone.tiles_mode == 'lane' %}checked{% endif %}>
             <label class="form-check-label" for="tm_lane">All tiles of lane</label>
             <input type="number" name="tiles_lane" value="1" min="1" max="2"
                    class="form-control form-control-sm d-inline-block ms-2" style="width: 70px;">
           </div>
           <div class="form-check">
-            <input class="form-check-input" type="radio" name="tiles_mode" value="spread" id="tm_spread">
+            <input class="form-check-input" type="radio" name="tiles_mode" value="spread" id="tm_spread"
+                   {% if clone and clone.tiles_mode == 'spread' %}checked{% endif %}>
             <label class="form-check-label" for="tm_spread">Spread (geometric N)</label>
           </div>
           <div class="form-check">
-            <input class="form-check-input" type="radio" name="tiles_mode" value="random" id="tm_random">
+            <input class="form-check-input" type="radio" name="tiles_mode" value="random" id="tm_random"
+                   {% if clone and clone.tiles_mode == 'random' %}checked{% endif %}>
             <label class="form-check-label" for="tm_random">Random N tiles</label>
           </div>
           <div class="mt-2">
@@ -144,7 +160,9 @@
             {% for m in masks %}
               <div class="form-check">
                 <input class="form-check-input" type="checkbox" name="builtin_masks" value="{{ m.text }}"
-                       id="m_{{ loop.index }}" checked>
+                       id="m_{{ loop.index }}"
+                       {% if clone %}{% if m.text in clone.masks %}checked{% endif %}
+                       {% else %}checked{% endif %}>
                 <label class="form-check-label" for="m_{{ loop.index }}"><code>{{ m.text }}</code></label>
               </div>
             {% endfor %}
@@ -164,19 +182,26 @@
         <div class="card-header">⚙️ Execution params</div>
         <div class="card-body">
           <label class="form-label small mb-0">Threads per mask (-p)</label>
-          <input type="number" name="threads" value="{{ defaults.threads }}" min="1" max="48"
-                 class="form-control form-control-sm">
+          <input type="number" name="threads"
+                 value="{{ clone.threads if clone and clone.threads else defaults.threads }}"
+                 min="1" max="48" class="form-control form-control-sm">
           <label class="form-label small mb-0 mt-2">Concurrent masks (-j)</label>
-          <input type="number" name="max_jobs" value="{{ defaults.max_inner_jobs }}" min="1" max="9"
-                 class="form-control form-control-sm">
+          <input type="number" name="max_jobs"
+                 value="{{ clone.max_jobs if clone and clone.max_jobs else defaults.max_inner_jobs }}"
+                 min="1" max="9" class="form-control form-control-sm">
           <label class="form-label small mb-0 mt-2">Mem limit per job</label>
-          <input type="text" name="mem_limit" placeholder="e.g. 16g" class="form-control form-control-sm">
+          <input type="text" name="mem_limit"
+                 value="{{ clone.mem_limit_per_job if clone and clone.mem_limit_per_job else '' }}"
+                 placeholder="e.g. 16g" class="form-control form-control-sm">
           <div class="form-check mt-2">
-            <input class="form-check-input" type="checkbox" name="cache_input" id="cache_input" value="1">
+            <input class="form-check-input" type="checkbox" name="cache_input" id="cache_input" value="1"
+                   {% if clone and clone.cache_input %}checked{% endif %}>
             <label class="form-check-label" for="cache_input">--cache-input (stage to /dev/shm)</label>
           </div>
           <label class="form-label small mb-0 mt-2">Docker image</label>
-          <input type="text" name="docker_image" value="{{ defaults.docker_image }}" class="form-control form-control-sm">
+          <input type="text" name="docker_image"
+                 value="{{ clone.docker_image if clone and clone.docker_image else defaults.docker_image }}"
+                 class="form-control form-control-sm">
         </div>
       </div>
     </div>
