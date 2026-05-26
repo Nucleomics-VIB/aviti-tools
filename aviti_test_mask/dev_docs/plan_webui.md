@@ -26,10 +26,13 @@
 
 ### Conda environment
 
-Hard rule: **nothing related to this tool gets installed on the host
-Python or via the user-level `pip`.** All Python deps live in a
-dedicated conda env. This applies to dev *and* the Stage 2 Docker
-image base (where the Dockerfile creates the same env inside).
+Hard rule: **every dependency — Python packages and unix tools alike —
+lives in a dedicated conda env.** The production host is assumed to
+provide only `bash` and `docker`; any other binary the tool invokes
+(`parallel`, `gawk`, `sed`, `grep`, `findutils`, `jq`, `yq`,
+`coreutils`, …) ships from `environment.yml`. Adding a new tool means
+adding it to the env, never `apt install`-ing on the host. This
+applies to dev *and* the Stage 2 Docker image base.
 
 Layout:
 

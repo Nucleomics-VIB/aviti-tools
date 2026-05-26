@@ -1,7 +1,12 @@
+# Self-contained env for aviti_test_mask web UI.
+# Rule: every binary the tool invokes must be installed here, NOT relied upon
+# from the host. The production host is assumed to provide only bash + docker;
+# anything else (parallel, awk, sed, grep, coreutils, yq, jq, ...) ships here.
 name: aviti_test_mask_webui
 channels:
   - conda-forge
 dependencies:
+  # Python stack
   - python=3.11
   - flask>=3.0
   - jinja2>=3.1
@@ -9,3 +14,13 @@ dependencies:
   - humanfriendly>=10.0
   - pytest>=8.0
   - pytest-cov
+  # Unix tools the bash scripts (aviti_test_mask.sh / integrate_mask_results.sh)
+  # rely on. Pinning them here decouples runtime correctness from the host.
+  - parallel        # GNU parallel — used by aviti_test_mask.sh -j
+  - coreutils       # realpath, stat, du, etc.
+  - gawk            # GNU awk — for any future parsing in shell helpers
+  - sed
+  - grep
+  - findutils       # GNU find, xargs
+  - jq              # JSON parsing from shell (RunStats, RunParameters, …)
+  - yq              # YAML parsing from shell (config.yaml, masks.yaml, users.yaml)

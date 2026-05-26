@@ -21,8 +21,11 @@ iterations.
 
 ## Setup
 
-Hard rule: every Python dependency is installed in a dedicated conda env.
-Nothing touches the host or user-level pip.
+Hard rule: **every** dependency — Python packages and unix tools alike —
+lives in a dedicated conda env. The host is assumed to provide only
+`bash` and `docker`; anything else (`parallel`, `awk`, `sed`, `jq`,
+`yq`, `realpath`, …) ships from `environment.yml`. Adding a new tool
+means adding it to the env, never `apt install`-ing on the host.
 
 ```bash
 cd webui
