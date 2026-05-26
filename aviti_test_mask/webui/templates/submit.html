@@ -193,11 +193,10 @@
           <input type="text" name="mem_limit"
                  value="{{ clone.mem_limit_per_job if clone and clone.mem_limit_per_job else '' }}"
                  placeholder="e.g. 16g" class="form-control form-control-sm">
-          <div class="form-check mt-2">
-            <input class="form-check-input" type="checkbox" name="cache_input" id="cache_input" value="1"
-                   {% if clone and clone.cache_input %}checked{% endif %}>
-            <label class="form-check-label" for="cache_input">--cache-input (stage to /dev/shm)</label>
-          </div>
+          {# --cache-input hidden from the UI: chicken (126 GB /dev/shm) is
+             too small to safely stage 100 GB+ run folders, especially under
+             multi-user concurrency. Still available via the bash script's
+             --cache-input flag for power users on larger hosts. #}
           <label class="form-label small mb-0 mt-2">Docker image</label>
           <input type="text" name="docker_image"
                  value="{{ clone.docker_image if clone and clone.docker_image else defaults.docker_image }}"

@@ -35,13 +35,12 @@
             <th title="Threads per mask (-p)">-p</th>
             <th title="Concurrent masks (-j)">-j</th>
             <th title="Memory limit per job">Mem</th>
-            <th title="--cache-input enabled?">Cache</th>
             <th>State</th>
             <th class="text-end"></th>
           </tr>
         </thead>
         <tbody id="queue-tbody">
-          <tr><td colspan="13" class="text-center text-muted py-3">Loading…</td></tr>
+          <tr><td colspan="12" class="text-center text-muted py-3">Loading…</td></tr>
         </tbody>
       </table>
     </div>
@@ -135,7 +134,7 @@
     if (!rows.length) {
       const tr = document.createElement('tr');
       const td = document.createElement('td');
-      td.colSpan = 13;
+      td.colSpan = 12;
       td.className = 'text-center text-muted py-3';
       td.textContent = 'No active jobs.';
       tr.appendChild(td);
@@ -162,7 +161,6 @@
       tr.appendChild(cell(r.threads));
       tr.appendChild(cell(r.max_jobs));
       tr.appendChild(cell(r.mem_limit_per_job));
-      tr.appendChild(cell(r.cache_input ? 'yes' : 'no'));
       // State pill
       const tdState = document.createElement('td');
       tdState.appendChild(statePill(r.state));
@@ -247,7 +245,7 @@
       tbody.replaceChildren();
       const tr = document.createElement('tr');
       const td = document.createElement('td');
-      td.colSpan = 13;
+      td.colSpan = 12;
       td.className = 'text-danger text-center py-3';
       td.textContent = 'Error: ' + e.message;
       tr.appendChild(td);
