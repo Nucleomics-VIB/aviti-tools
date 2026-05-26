@@ -275,7 +275,12 @@
     }
     for (const r of rows) {
       const tr = document.createElement('tr');
-      tr.appendChild(cell(r.queue_position == null ? '' : r.queue_position));
+      // # column: queued/paused show the position; running shows ▶,
+      // integrating/stopping show the matching glyph. Never blank.
+      const posMap = { running: '▶', integrating: '🧾', stopping: '⏹' };
+      tr.appendChild(cell(r.queue_position != null
+        ? r.queue_position
+        : (posMap[r.state] || '·')));
       tr.appendChild(cell(r.submitted_at));
       tr.appendChild(cell(r.submitter));
       // Run cell with code formatting

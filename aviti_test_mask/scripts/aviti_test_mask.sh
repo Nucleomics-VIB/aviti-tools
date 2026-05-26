@@ -424,30 +424,32 @@ for i in "${!MASKS[@]}"; do
   echo "▶ [$((i + 1))/${#MASKS[@]}] $MASK"
   (
     trap 'printf " " >&3' EXIT  # release slot on subshell exit (normal or error)
-    run_mask_qc "$MASK" "$OUTDIR"
+    if run_mask_qc "$MASK" "$OUTDIR"; then
+      echo "✅ [$MASK] completed"
+    else
+      ec=$?
+      if [[ $ec -eq 137 ]]; then
+        echo "❌ [$MASK] KILLED — OOM (exit 137); raise mem_limit_per_job or reduce --jobs"
+      else
+        echo "❌ [$MASK] FAILED (exit $ec) — see $OUTDIR/run.log"
+      fi
+      exit "$ec"
+    fi
   ) &
   PIDS+=("$!")
   _MASK_FOR_PID["$!"]="$MASK"
   _OUTDIR_FOR_PID["$!"]="$OUTDIR"
 done
 
-# Wait for all jobs; report each result with mask name
+# Wait for all jobs; per-mask success/fail line was already emitted by
+# the subshell, so just tally exit codes here for the final summary.
 SUCCESS=0
 FAILED=0
 for pid in "${PIDS[@]}"; do
-  mask="${_MASK_FOR_PID[$pid]}"
-  outdir="${_OUTDIR_FOR_PID[$pid]}"
   if wait "$pid" 2>/dev/null; then
     SUCCESS=$((SUCCESS + 1))
-    echo "✅ [$mask] completed"
   else
-    ec=$?
     FAILED=$((FAILED + 1))
-    if [[ $ec -eq 137 ]]; then
-      echo "❌ [$mask] KILLED — OOM (exit 137); raise mem_limit_per_job or reduce --jobs"
-    else
-      echo "❌ [$mask] FAILED (exit $ec) — see $outdir/run.log"
-    fi
   fi
 done
 
