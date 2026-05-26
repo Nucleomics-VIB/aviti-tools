@@ -109,8 +109,8 @@
     try {
       const p = JSON.parse(localStorage.getItem('aviti_ui_prefs') || '{}');
       const v = +p.runs_per_page;
-      return Number.isFinite(v) && v > 0 ? v : 10;
-    } catch (e) { return 10; }
+      return Number.isFinite(v) && v > 0 ? v : 15;
+    } catch (e) { return 15; }
   })();
   const cache = new Map();
   let currentPage = 1;

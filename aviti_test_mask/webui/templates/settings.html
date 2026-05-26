@@ -26,6 +26,7 @@
         <label for="runs-per-page" class="form-label small">Runs per page</label>
         <select id="runs-per-page" class="form-select form-select-sm">
           <option value="10">10</option>
+          <option value="15">15 (default)</option>
           <option value="25">25</option>
           <option value="50">50</option>
           <option value="100">100</option>
@@ -76,7 +77,7 @@
 <script>
 (function () {
   const DEFAULTS = {
-    runs_per_page: 10,
+    runs_per_page: 15,
     history_per_page: 20,
     queue_refresh_ms: 3000,
   };
