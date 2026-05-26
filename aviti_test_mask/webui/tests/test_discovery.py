@@ -191,17 +191,39 @@ def test_check_nas_mount_ok(tmp_path):
     assert res["sample_run_count"] >= 1
 
 
-def test_resolve_tile_spec_default(tmp_path):
-    _write_tiles(tmp_path, ["L1R01C01S1", "L1R02C01S1"])
+def test_resolve_tile_spec_default_single_lane(tmp_path):
+    _write_tiles(tmp_path, ["L1R02C01S1", "L1R01C01S1"])
+    out = resolve_tile_spec(tmp_path, "default")
+    # Pattern still None — script keeps omitting --include-tile.
+    assert out["pattern"] is None
+    assert out["spec"] == "default"
+    # Predicted picks: first tile of each lane (sorted).
+    assert out["tiles"] == ["L1R01C01S1"]
+    assert out["count"] == 1
+
+
+def test_resolve_tile_spec_default_multi_lane(tmp_path):
+    _write_tiles(tmp_path, ["L1R02C01S1", "L2R01C01S1",
+                            "L1R01C01S1", "L2R02C01S1"])
+    out = resolve_tile_spec(tmp_path, "default")
+    assert out["pattern"] is None
+    assert out["tiles"] == ["L1R01C01S1", "L2R01C01S1"]
+
+
+def test_resolve_tile_spec_default_no_manifest_falls_back(tmp_path):
+    _write_tiles(tmp_path, [])
     out = resolve_tile_spec(tmp_path, "default")
     assert out == {"spec": "default", "pattern": None, "tiles": [], "count": 0}
 
 
 def test_resolve_tile_spec_all(tmp_path):
-    _write_tiles(tmp_path, ["L1R01C01S1"])
+    _write_tiles(tmp_path, ["L1R01C01S1", "L2R03C04S1"])
     out = resolve_tile_spec(tmp_path, "all")
     assert out["pattern"] == "L.R..C..S."
     assert out["spec"] == "all"
+    # Full tile inventory now travels with the row for UI display.
+    assert sorted(out["tiles"]) == ["L1R01C01S1", "L2R03C04S1"]
+    assert out["count"] == 2
 
 
 def test_resolve_tile_spec_lane(tmp_path):

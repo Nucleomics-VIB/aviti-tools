@@ -63,11 +63,28 @@ def resolve_tile_spec(
         return [t for t in items if t and t[0] == "L" and t[1] in lane_filter]
 
     if tiles_mode == "default":
-        return {"spec": "default", "pattern": None, "tiles": [], "count": 0}
+        # bases2fastq with --qc-only and no --include-tile processes the
+        # first tile of each lane present. We predict that here so the
+        # queue/history UIs can show concrete tile names rather than the
+        # opaque label "default". Pattern stays None so the script still
+        # omits the flag.
+        all_tiles = filter_by_lane(_read_tiles_list(run_path))
+        if not all_tiles:
+            return {"spec": "default", "pattern": None, "tiles": [], "count": 0}
+        by_lane: dict[str, str] = {}
+        for t in sorted(all_tiles):
+            if len(t) >= 2 and t[0] == "L":
+                lane = t[1]
+                if lane not in by_lane:
+                    by_lane[lane] = t
+        picked = [by_lane[k] for k in sorted(by_lane)]
+        return {"spec": "default", "pattern": None,
+                "tiles": picked, "count": len(picked)}
 
     if tiles_mode == "all":
-        pat = "L.R..C..S."
-        return {"spec": "all", "pattern": pat, "tiles": [], "count": -1}
+        all_tiles = filter_by_lane(_read_tiles_list(run_path))
+        return {"spec": "all", "pattern": "L.R..C..S.",
+                "tiles": all_tiles, "count": len(all_tiles)}
 
     if tiles_mode == "lane":
         lane = int(tiles_lane or 1)

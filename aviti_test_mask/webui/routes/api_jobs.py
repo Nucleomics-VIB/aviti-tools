@@ -141,9 +141,13 @@ def get_job_log(job_id: str):
     row = dao.get(job_id)
     if row is None:
         return jsonify({"error": "unknown job"}), 404
-    log_path = cfg.results_root / job_id / "run.log"
+    which = (request.args.get("file") or "run").lower()
+    if which not in ("run", "integrate"):
+        return jsonify({"error": "file must be 'run' or 'integrate'"}), 400
+    fname = "integrate.log" if which == "integrate" else "run.log"
+    log_path = cfg.results_root / job_id / fname
     if not log_path.exists():
-        return jsonify({"error": "no log yet", "log": ""}), 200
+        return jsonify({"error": f"no {fname} yet", "log": ""}), 200
     try:
         size = log_path.stat().st_size
         with log_path.open("rb") as fh:

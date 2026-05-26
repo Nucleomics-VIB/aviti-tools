@@ -324,17 +324,24 @@
         tdMasks.textContent = `${r.mask_count} (${r.masks_source})`;
       }
       tr.appendChild(tdMasks);
-      // Empty tiles_spec means the bases2fastq default — single tile, no
-      // --include-tile flag. Render that explicitly so the column is
-      // never visually empty.
-      // Tiles: show the resolved spec + count of picked tiles when explicit.
-      // For "spread:N" / "random:N", append the chosen tiles in the tooltip.
+      // Tiles cell: prefer concrete names. Fall back to the spec label
+      // only when no picked-tiles list was persisted (e.g. raw pattern
+      // mode, or a 'default' submission against a run with no manifest).
       const tdT = document.createElement('td');
-      tdT.textContent = r.tiles_spec || 'single tile (default)';
-      if (Array.isArray(r.tiles_picked) && r.tiles_picked.length) {
-        tdT.title = 'tiles: ' + r.tiles_picked.join(', ');
-      } else if (r.tiles_pattern) {
-        tdT.title = '--include-tile ' + r.tiles_pattern;
+      const tiles = Array.isArray(r.tiles_picked) ? r.tiles_picked : [];
+      const spec = (r.tiles_spec || '').toLowerCase();
+      const SHOW_NAMES_THRESHOLD = 4;
+      if (tiles.length === 0) {
+        tdT.textContent = r.tiles_spec || 'single tile (default)';
+        if (r.tiles_pattern) tdT.title = '--include-tile ' + r.tiles_pattern;
+      } else if (tiles.length <= SHOW_NAMES_THRESHOLD) {
+        tdT.textContent = tiles.join(', ');
+        tdT.title = (r.tiles_spec || '') + ' — ' + tiles.length +
+                    ' tile' + (tiles.length === 1 ? '' : 's');
+      } else {
+        const label = spec.startsWith('all') ? 'all' : (r.tiles_spec || 'tiles');
+        tdT.textContent = label + ' (' + tiles.length + ' tiles)';
+        tdT.title = 'tiles: ' + tiles.join(', ');
       }
       tr.appendChild(tdT);
       // Lanes (from params_json — 1 / 2 / all)

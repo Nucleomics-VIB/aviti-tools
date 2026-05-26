@@ -13,6 +13,7 @@
     <a href="/history" class="btn btn-sm btn-outline-secondary py-0">← History</a>
     <a id="resubmit-link" class="btn btn-sm btn-outline-secondary py-0"
        href="/resubmit/{{ job_id }}">📋 Re-submit</a>
+    <button id="view-report" type="button" class="btn btn-sm btn-outline-success py-0">📑 Full report</button>
     <button id="view-log" type="button" class="btn btn-sm btn-outline-info py-0">📜 View log</button>
   </div>
 </div>
@@ -188,20 +189,27 @@
     });
   }
 
-  document.getElementById('view-log').addEventListener('click', async () => {
+  async function openLog(which) {
+    const titleLabel = which === 'integrate' ? 'Full report' : 'Job log';
+    document.querySelector('#logModal .modal-title').textContent =
+      titleLabel + ' — ' + JOB_ID;
     const body = document.getElementById('logModalBody');
     body.textContent = 'Loading…';
     const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('logModal'));
     modal.show();
     try {
-      const r = await fetch('/api/v1/jobs/' + encodeURIComponent(JOB_ID) + '/log');
+      const url = '/api/v1/jobs/' + encodeURIComponent(JOB_ID) +
+                  '/log?file=' + encodeURIComponent(which);
+      const r = await fetch(url);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const d = await r.json();
       body.textContent = d.log || '(empty)';
     } catch (e) {
       body.textContent = 'Error: ' + e.message;
     }
-  });
+  }
+  document.getElementById('view-log').addEventListener('click', () => openLog('run'));
+  document.getElementById('view-report').addEventListener('click', () => openLog('integrate'));
 
   load();
 })();
