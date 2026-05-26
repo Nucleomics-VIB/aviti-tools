@@ -43,6 +43,40 @@ POLL_INTERVAL_SECONDS = 2.0
 CANCEL_GRACE_SECONDS = 30
 
 
+def _extract_error_message(log_path: Path, rc: int, *,
+                            max_chars: int = 500) -> str:
+    """Pull the most informative line from a failed run.log.
+
+    Prefers, in order:
+    1. A line containing ``❌`` (the script's failure markers).
+    2. A line starting with ``Error:`` / ``error:`` / ``Traceback``.
+    3. The last non-empty line.
+    Falls back to ``f"script exit {rc}"`` if the log can't be read.
+    """
+    try:
+        text = log_path.read_text(errors="replace")
+    except OSError:
+        return f"script exit {rc}"
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return f"script exit {rc}"
+    candidates: list[str] = []
+    for ln in lines:
+        if "❌" in ln:
+            candidates.append(ln)
+    if not candidates:
+        for ln in lines:
+            low = ln.lower()
+            if low.startswith("error") or low.startswith("traceback"):
+                candidates.append(ln)
+    if not candidates:
+        candidates.append(lines[-1])
+    msg = candidates[-1].strip()
+    if len(msg) > max_chars:
+        msg = msg[:max_chars] + "…"
+    return f"[exit {rc}] {msg}"
+
+
 @dataclass
 class _ActiveJob:
     job_id: str
@@ -77,6 +111,9 @@ class JobWorker:
         self._thread.start()
         log.info("worker started (script=%s)", self.script_path)
 
+    def is_alive(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
     def stop(self, *, kill_active: bool = False) -> None:
         self._stop.set()
         if kill_active:
@@ -110,8 +147,41 @@ class JobWorker:
 
     def _tick(self) -> None:
         self._reap_finished()
+        self._update_progress()
         self._handle_cancellations()
         self._try_launch_next()
+
+    # ── Per-mask progress ────────────────────────────────────────────
+
+    def _update_progress(self) -> None:
+        """Count per-mask ✅/❌ lines in each active job's log + update DB."""
+        with self._lock:
+            snapshot = list(self._active.values())
+        for aj in snapshot:
+            log_path = aj.session_dir / "run.log"
+            if not log_path.exists():
+                continue
+            try:
+                # Tail the last 32 KB — counts stay accurate because the
+                # script never repeats per-mask result lines.
+                size = log_path.stat().st_size
+                with log_path.open("rb") as fh:
+                    if size > 32 * 1024:
+                        fh.seek(-32 * 1024, 2)
+                    text = fh.read().decode("utf-8", errors="replace")
+            except OSError:
+                continue
+            ok = sum(1 for ln in text.splitlines()
+                     if ln.startswith("✅ [") and "completed" in ln)
+            bad = sum(1 for ln in text.splitlines()
+                      if ln.startswith("❌ [") and
+                      ("FAILED" in ln or "KILLED" in ln))
+            current = self.dao.get(aj.job_id) or {}
+            if (current.get("masks_succeeded") != ok
+                    or current.get("masks_failed") != bad):
+                self.dao.update(aj.job_id,
+                                masks_succeeded=ok,
+                                masks_failed=bad)
 
     # ── Launch ───────────────────────────────────────────────────────
 
@@ -132,10 +202,55 @@ class JobWorker:
             self._launch(row)
             return  # one launch per tick keeps the loop responsive
 
+    def _preflight(self, row: dict) -> str | None:
+        """Return an error message if the job can't safely run, else None.
+
+        Cheap probes done before we spawn ``aviti_test_mask.sh`` so a
+        misconfigured Docker daemon or a stale run-folder reference
+        produces a clear "failed" state with a useful error rather than
+        letting the bash script run for ~30 s and bail out itself.
+        """
+        run_path = Path(row["run_path"])
+        if not run_path.exists():
+            return f"run folder gone: {run_path}"
+        if not run_path.is_dir():
+            return f"run path is not a directory: {run_path}"
+        try:
+            next(iter(run_path.iterdir()))
+        except (StopIteration, OSError) as exc:
+            return f"run folder unreadable: {exc}"
+        try:
+            r = subprocess.run(
+                ["docker", "info", "--format", "{{.ServerVersion}}"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except FileNotFoundError:
+            return "docker CLI not on PATH"
+        except subprocess.TimeoutExpired:
+            return "docker daemon unreachable (timeout)"
+        if r.returncode != 0:
+            err = (r.stderr or r.stdout or "").strip().splitlines()
+            tail = err[-1] if err else "docker info failed"
+            return f"docker daemon unreachable: {tail}"
+        return None
+
     def _launch(self, row: dict) -> None:
         job_id = row["job_id"]
         session_dir = self.cfg.results_root / job_id
         session_dir.mkdir(parents=True, exist_ok=True)
+        preflight_err = self._preflight(row)
+        if preflight_err:
+            self.dao.update(
+                job_id, state="failed",
+                started_at=utc_now_iso(),
+                finished_at=utc_now_iso(),
+                error_message=f"[preflight] {preflight_err}",
+            )
+            log.warning("preflight failed for %s: %s", job_id, preflight_err)
+            (session_dir / "run.log").write_text(
+                f"# {utc_now_iso()} preflight failed: {preflight_err}\n"
+            )
+            return
         # Persist the resolved mask list into a small YAML the script reads.
         try:
             masks = json.loads(row.get("masks_json") or "[]")
@@ -222,12 +337,13 @@ class JobWorker:
                 duration = None
 
         if rc != 0:
+            msg = _extract_error_message(aj.session_dir / "run.log", rc)
             self.dao.update(aj.job_id, state="failed",
                             exit_code=rc,
                             duration_seconds=duration,
                             finished_at=utc_now_iso(),
-                            error_message=f"script exit {rc}")
-            log.warning("job %s failed (rc=%s)", aj.job_id, rc)
+                            error_message=msg)
+            log.warning("job %s failed (rc=%s): %s", aj.job_id, rc, msg)
             return
 
         # Success → integrate

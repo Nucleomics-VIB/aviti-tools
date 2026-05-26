@@ -47,6 +47,51 @@
   </div>
 </div>
 
+<!-- Recent failures section -->
+<div class="mt-4" id="failures-section" style="display: none;">
+  <h2 class="h6 mb-2">
+    <span class="text-danger">⚠</span> Recent failures (last 24 h)
+  </h2>
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 align-middle small">
+          <thead class="table-light small">
+            <tr>
+              <th>Submitted</th>
+              <th>User</th>
+              <th>Run</th>
+              <th>State</th>
+              <th>Error</th>
+              <th class="text-end"></th>
+            </tr>
+          </thead>
+          <tbody id="failures-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Log modal -->
+<div class="modal fade" id="logModal" tabindex="-1" aria-labelledby="logModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="logModalLabel">Job log</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <pre id="logModalBody" class="small bg-light p-2 mb-0"
+             style="max-height: 60vh; overflow: auto; white-space: pre-wrap;">Loading…</pre>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Clear queue modal -->
 <div class="modal fade" id="clearModal" tabindex="-1" aria-labelledby="clearModalLabel" aria-hidden="true">
   <div class="modal-dialog">
@@ -128,6 +173,76 @@
     return r.json();
   }
 
+  async function fetchFailures() {
+    const r = await fetch('/api/v1/jobs/recent_failures');
+    if (!r.ok) return { jobs: [] };
+    return r.json();
+  }
+
+  function renderFailures(rows) {
+    const section = document.getElementById('failures-section');
+    const tbody = document.getElementById('failures-tbody');
+    tbody.replaceChildren();
+    if (!rows.length) {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = '';
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      tr.appendChild(cell(r.submitted_at));
+      tr.appendChild(cell(r.submitter));
+      const tdRun = document.createElement('td');
+      const code = document.createElement('code'); code.textContent = r.run_id;
+      tdRun.appendChild(code); tr.appendChild(tdRun);
+      const tdState = document.createElement('td');
+      const pill = document.createElement('span');
+      pill.className = 'badge ' + (r.state === 'failed' ? 'bg-danger' : 'bg-secondary');
+      pill.textContent = r.state;
+      tdState.appendChild(pill);
+      tr.appendChild(tdState);
+      // Error message — wrap, clip, full text in tooltip
+      const tdErr = document.createElement('td');
+      tdErr.className = 'small text-muted';
+      tdErr.style.maxWidth = '40em';
+      tdErr.style.overflow = 'hidden';
+      tdErr.style.textOverflow = 'ellipsis';
+      tdErr.style.whiteSpace = 'nowrap';
+      tdErr.textContent = r.error_message || '—';
+      tdErr.title = r.error_message || '';
+      tr.appendChild(tdErr);
+      // View log button
+      const tdAct = document.createElement('td');
+      tdAct.className = 'text-end';
+      const view = document.createElement('button');
+      view.type = 'button';
+      view.className = 'btn btn-sm btn-outline-secondary py-0';
+      view.textContent = 'View log';
+      view.addEventListener('click', () => openLogModal(r.job_id));
+      tdAct.appendChild(view);
+      tr.appendChild(tdAct);
+      tbody.appendChild(tr);
+    }
+  }
+
+  async function openLogModal(jobId) {
+    const body = document.getElementById('logModalBody');
+    document.getElementById('logModalLabel').textContent = 'Job log — ' + jobId;
+    body.textContent = 'Loading…';
+    const modalEl = document.getElementById('logModal');
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+    try {
+      const r = await fetch('/api/v1/jobs/' + encodeURIComponent(jobId) + '/log');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      body.textContent = d.log || '(empty)';
+    } catch (e) {
+      body.textContent = 'Error: ' + e.message;
+    }
+  }
+  window.openLogModal = openLogModal;
+
   function render(rows) {
     lastRows = rows;
     tbody.replaceChildren();
@@ -150,7 +265,43 @@
       const tdRun = document.createElement('td');
       const code = document.createElement('code'); code.textContent = r.run_id;
       tdRun.appendChild(code); tr.appendChild(tdRun);
-      tr.appendChild(cell(r.mask_count + ' (' + r.masks_source + ')'));
+      // Masks: show progress while running, total + source otherwise.
+      const tdMasks = document.createElement('td');
+      if (r.state === 'running' || r.state === 'integrating' || r.state === 'stopping') {
+        const ok = r.masks_succeeded || 0;
+        const bad = r.masks_failed || 0;
+        const total = r.mask_count;
+        const done = ok + bad;
+        const summary = document.createElement('div');
+        summary.className = 'small';
+        summary.textContent = `${done}/${total}`;
+        if (ok > 0) {
+          const okSpan = document.createElement('span');
+          okSpan.className = 'badge bg-success ms-1';
+          okSpan.textContent = '✓ ' + ok;
+          summary.appendChild(okSpan);
+        }
+        if (bad > 0) {
+          const badSpan = document.createElement('span');
+          badSpan.className = 'badge bg-danger ms-1';
+          badSpan.textContent = '✗ ' + bad;
+          summary.appendChild(badSpan);
+        }
+        tdMasks.appendChild(summary);
+        // Tiny progress bar
+        const bar = document.createElement('div');
+        bar.className = 'progress mt-1';
+        bar.style.height = '4px';
+        const fill = document.createElement('div');
+        const pct = total > 0 ? (done / total) * 100 : 0;
+        fill.className = 'progress-bar ' + (bad > 0 ? 'bg-warning' : 'bg-primary');
+        fill.style.width = pct.toFixed(0) + '%';
+        bar.appendChild(fill);
+        tdMasks.appendChild(bar);
+      } else {
+        tdMasks.textContent = `${r.mask_count} (${r.masks_source})`;
+      }
+      tr.appendChild(tdMasks);
       // Empty tiles_spec means the bases2fastq default — single tile, no
       // --include-tile flag. Render that explicitly so the column is
       // never visually empty.
@@ -209,6 +360,17 @@
         }
       }
 
+      // View log (available for any state that has a session dir, i.e. once running)
+      if (r.state !== 'queued' && r.state !== 'paused') {
+        const view = document.createElement('button');
+        view.type = 'button';
+        view.className = 'btn btn-sm btn-outline-info py-0';
+        view.title = 'Tail run.log';
+        view.textContent = '📜';
+        view.addEventListener('click', () => openLogModal(r.job_id));
+        grp.appendChild(view);
+      }
+
       // Re-submit (always available — even from running jobs)
       const re = document.createElement('a');
       re.className = 'btn btn-sm btn-outline-secondary py-0';
@@ -248,6 +410,8 @@
     try {
       const data = await fetchQueue();
       render(data.jobs);
+      const fails = await fetchFailures();
+      renderFailures(fails.jobs || []);
       document.getElementById('queue-updated').textContent =
         'updated ' + new Date().toLocaleTimeString();
     } catch (e) {
@@ -314,6 +478,22 @@
       result.textContent = 'Error: ' + e.message;
     }
   });
+
+  // Auto-refresh: poll the queue every 3 s as long as there's at least
+  // one active or queued job AND no modal is currently shown.
+  function anyModalOpen() {
+    return !!document.querySelector('.modal.show');
+  }
+  function shouldAutoRefresh() {
+    return lastRows.some(r =>
+      r.state === 'running' || r.state === 'integrating' ||
+      r.state === 'stopping' || r.state === 'queued');
+  }
+  setInterval(() => {
+    if (anyModalOpen()) return;
+    if (!shouldAutoRefresh()) return;
+    reload();
+  }, 3000);
 
   reload();
 })();

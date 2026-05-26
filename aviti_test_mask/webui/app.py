@@ -243,6 +243,39 @@ def create_app() -> Flask:
         jobs = _sorted_queue_jobs()
         return jsonify({"jobs": jobs, "total": len(jobs)})
 
+    @app.get("/api/v1/jobs/recent_failures")
+    def get_recent_failures():
+        dao: JobsDAO = app.config["DAO"]
+        from datetime import datetime, timedelta
+        since = (datetime.utcnow() - timedelta(hours=24)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        rows, _ = dao.list(states=["failed", "cancelled"],
+                            since=since, limit=20,
+                            order_by="submitted_at DESC")
+        return jsonify({"jobs": rows, "total": len(rows)})
+
+    @app.get("/api/v1/jobs/<job_id>/log")
+    def get_job_log(job_id: str):
+        dao: JobsDAO = app.config["DAO"]
+        row = dao.get(job_id)
+        if row is None:
+            return jsonify({"error": "unknown job"}), 404
+        session_dir = cfg.results_root / job_id
+        log_path = session_dir / "run.log"
+        if not log_path.exists():
+            return jsonify({"error": "no log yet", "log": ""}), 200
+        # Last ~64 KB so very long logs stay manageable.
+        try:
+            size = log_path.stat().st_size
+            with log_path.open("rb") as fh:
+                if size > 64 * 1024:
+                    fh.seek(-64 * 1024, 2)
+                content = fh.read().decode("utf-8", errors="replace")
+        except OSError as exc:
+            return jsonify({"error": str(exc)}), 500
+        return jsonify({"log": content, "size_bytes": size,
+                        "state": row["state"]})
+
     @app.delete("/api/v1/jobs/<job_id>")
     def delete_job(job_id: str):
         dao: JobsDAO = app.config["DAO"]
@@ -403,13 +436,32 @@ def create_app() -> Flask:
     @app.get("/api/v1/health")
     def health():
         check = check_nas_mount(cfg)
+        worker = app.config.get("WORKER")
+        worker_alive = worker.is_alive() if worker else False
+        # Cheap docker daemon probe — used by the preflight too. Bounded
+        # at 5 s so the health page never hangs.
+        import subprocess as _sp
+        try:
+            r = _sp.run(["docker", "info", "--format", "{{.ServerVersion}}"],
+                        capture_output=True, text=True, timeout=5)
+            docker_ok = r.returncode == 0
+            docker_version = r.stdout.strip() if docker_ok else None
+            docker_error = r.stderr.strip() if not docker_ok else None
+        except (FileNotFoundError, _sp.TimeoutExpired) as exc:
+            docker_ok = False
+            docker_version = None
+            docker_error = str(exc)
         return jsonify({
-            "status": "ok" if check["ok"] else "degraded",
+            "status": "ok" if (check["ok"] and worker_alive and docker_ok)
+                      else "degraded",
             "app_name": cfg.app_name,
             "app_version": cfg.app_version,
             "release_date": cfg.release_date,
             "nas_root": str(cfg.nas_root),
             "nas_check": check,
+            "worker_alive": worker_alive,
+            "docker": {"ok": docker_ok, "version": docker_version,
+                       "error": docker_error},
             "db_path": str(cfg.db_path),
         })
 

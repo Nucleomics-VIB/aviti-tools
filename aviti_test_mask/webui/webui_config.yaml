@@ -26,14 +26,18 @@ jobs_dir: /tmp/aviti_test_mask_results     # same as results_root in single-user
 db_path: /tmp/aviti_test_mask_results/jobs.db
 
 # --- Concurrency ---
-# Global cap on simultaneous bases2fastq containers across the whole host.
-# This is the binding limit; max_concurrent_jobs and max_inner_jobs only
-# shape how the 3 slots are distributed between users / inner masks.
-max_global_containers: 3
-max_concurrent_jobs: 3
+# Mac-dev defaults (M2 with colima emulating linux/amd64). The amd64
+# bases2fastq image runs under QEMU translation here, ~3-5x slower than
+# native, so we keep parallelism tight.
+# Production (Ubuntu, native amd64) should bump these:
+#   max_global_containers: 3
+#   max_inner_jobs: 3
+#   threads: 8
+max_global_containers: 1
+max_concurrent_jobs: 1
 max_jobs_per_user: 1
-max_inner_jobs: 3
-threads: 8
+max_inner_jobs: 1
+threads: 4
 
 # --- Server ---
 host: 127.0.0.1
