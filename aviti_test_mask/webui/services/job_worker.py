@@ -172,29 +172,37 @@ class JobWorker:
         """Poll the surviving container; once it exits, run the normal
         post-exit reconciliation by reading the run.log for the bash
         script's exit summary, then trigger the integrator if needed.
-        We can't observe the bash script's actual exit code (the parent
-        process is gone), so we infer success / failure from the log's
+
+        We register the job in ``self._active`` for the lifetime of the
+        polling loop so the slot stays reserved and the launcher
+        doesn't oversubscribe ``max_global_containers``. We can't
+        observe the bash script's actual exit code (the parent process
+        is gone), so we infer success / failure from the log's
         trailing '📊 .../N succeeded | F failed' line.
         """
-        while not self._stop.is_set():
-            try:
-                r = subprocess.run(
-                    ["docker", "inspect", "-f", "{{.State.Status}}",
-                     container_id],
-                    capture_output=True, text=True, timeout=10,
-                )
-            except (OSError, subprocess.TimeoutExpired):
-                self._stop.wait(POLL_INTERVAL_SECONDS)
-                continue
-            status = (r.stdout or "").strip()
-            if status not in ("running", "created", "restarting", "paused"):
-                break
-            self._stop.wait(POLL_INTERVAL_SECONDS)
-        # Container is gone. Reconstruct an _ActiveJob-shaped namespace
-        # so the existing post-exit + integrator path can run.
         aj = _ActiveJob(job_id=job_id, submitter=submitter,
-                        process=None,  # type: ignore[arg-type]
-                        session_dir=session_dir)
+                        process=None, session_dir=session_dir)
+        with self._lock:
+            self._active[job_id] = aj
+        try:
+            while not self._stop.is_set():
+                try:
+                    r = subprocess.run(
+                        ["docker", "inspect", "-f", "{{.State.Status}}",
+                         container_id],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    self._stop.wait(POLL_INTERVAL_SECONDS)
+                    continue
+                status = (r.stdout or "").strip()
+                if status not in ("running", "created",
+                                  "restarting", "paused"):
+                    break
+                self._stop.wait(POLL_INTERVAL_SECONDS)
+        finally:
+            with self._lock:
+                self._active.pop(job_id, None)
         log_path = session_dir / "run.log"
         rc = self._infer_script_exit_from_log(log_path)
         self._on_process_exit(aj, rc)
@@ -403,6 +411,10 @@ class JobWorker:
                 aj = self._active.get(jid)
             if aj is None:
                 continue
+            if aj.process is None:
+                # Reattached after server restart; its lifecycle is
+                # owned by the docker-poll thread, not this reap loop.
+                continue
             rc = aj.process.poll()
             if rc is None:
                 continue
@@ -533,6 +545,10 @@ class JobWorker:
             self._stop_containers_for(r["job_id"])
 
     def _send_signal(self, aj: _ActiveJob, sig: int) -> None:
+        if aj.process is None:
+            # Reattached after restart — no bash pid to signal.
+            # _stop_containers_for handles the docker side.
+            return
         try:
             os.killpg(os.getpgid(aj.process.pid), sig)
         except (ProcessLookupError, PermissionError):
