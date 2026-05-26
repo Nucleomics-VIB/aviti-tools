@@ -28,6 +28,7 @@
               <th>Sequencer</th>
               <th>Run ID</th>
               <th class="text-end">Run start</th>
+              <th></th>
             </tr>
           </thead>
           <tbody id="runs-tbody">
@@ -112,7 +113,7 @@
   function emptyRow(message, isError) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 3;
+    td.colSpan = 4;
     td.className = 'text-center py-3 ' + (isError ? 'text-danger' : 'text-muted');
     td.textContent = message;
     tr.appendChild(td);
@@ -146,6 +147,23 @@
         tdM.className = 'text-end text-muted';
         tdM.textContent = fmtRunStart(r.run_start, r.mtime);
         tr.appendChild(tdM);
+        // Info link → opens the manifest modal
+        const tdInfo = document.createElement('td');
+        tdInfo.className = 'text-end';
+        if (r.run_internal_id) {
+          const link = document.createElement('a');
+          link.href = '#';
+          link.className = 'btn btn-sm btn-outline-secondary py-0';
+          link.textContent = 'Info';
+          link.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            openRunModal(r.run_internal_id, r.run_id);
+          });
+          tdInfo.appendChild(link);
+        } else {
+          tdInfo.innerHTML = '<span class="text-muted small">—</span>';
+        }
+        tr.appendChild(tdInfo);
         tbody.appendChild(tr);
       }
     }
@@ -189,7 +207,147 @@
   document.getElementById('runs-prev').addEventListener('click', () => show(currentPage - 1));
   document.getElementById('runs-next').addEventListener('click', () => show(currentPage + 1));
 
+  // ── Run metadata modal ────────────────────────────────────────────
+  const detailCache = new Map();
+  async function openRunModal(runInternalId, runId) {
+    document.getElementById('runModalLabel').textContent = runId;
+    const body = document.getElementById('runModalBody');
+    body.replaceChildren();
+    const loading = document.createElement('div');
+    loading.className = 'text-muted py-3';
+    loading.textContent = 'Loading…';
+    body.appendChild(loading);
+    const modalEl = document.getElementById('runModal');
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+    try {
+      let data = detailCache.get(runInternalId);
+      if (!data) {
+        const r = await fetch(`/api/v1/runs/${encodeURIComponent(runInternalId)}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        data = await r.json();
+        detailCache.set(runInternalId, data);
+      }
+      renderRunDetail(body, data);
+    } catch (e) {
+      body.replaceChildren();
+      const err = document.createElement('div');
+      err.className = 'text-danger';
+      err.textContent = 'Error: ' + e.message;
+      body.appendChild(err);
+    }
+  }
+  // Expose for the row-click handler in scope above.
+  window.openRunModal = openRunModal;
+
+  function dlPair(parent, label, value) {
+    const dt = document.createElement('dt');
+    dt.className = 'col-sm-4 text-muted';
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.className = 'col-sm-8';
+    dd.textContent = value == null ? '—' : String(value);
+    parent.appendChild(dt);
+    parent.appendChild(dd);
+  }
+
+  function renderRunDetail(body, d) {
+    body.replaceChildren();
+    // Headline scalar fields
+    const dl = document.createElement('dl');
+    dl.className = 'row mb-3';
+    dlPair(dl, 'Instrument', d.instrument);
+    dlPair(dl, 'Side',       d.side);
+    dlPair(dl, 'Flowcell',   d.flowcell_id);
+    dlPair(dl, 'Run start',  d.run_start);
+    dlPair(dl, 'Description',d.run_description);
+    dlPair(dl, 'Operator',   d.operator_name);
+    dlPair(dl, 'Throughput', d.throughput);
+    dlPair(dl, 'Kit',        d.kit_config);
+    dlPair(dl, 'Chemistry',  d.chemistry_version);
+    dlPair(dl, 'Platform',   d.platform_version);
+    dlPair(dl, 'Library',    d.library_type);
+    dlPair(dl, 'Lanes',      d.analysis_lanes);
+    dlPair(dl, '%PF',        d.percent_pf == null ? null : d.percent_pf.toFixed(2) + ' %');
+    dlPair(dl, 'PF reads',   d.pf_count == null ? null : d.pf_count.toLocaleString());
+    dlPair(dl, 'Total yield',d.total_yield == null ? null : d.total_yield.toLocaleString() + ' bp');
+    dlPair(dl, 'Outcome',    d.outcome);
+    body.appendChild(dl);
+
+    // Cycles
+    if (d.cycles_json) {
+      try {
+        const cycles = JSON.parse(d.cycles_json);
+        const txt = Object.entries(cycles).map(([k,v]) => `${k}=${v}`).join(', ');
+        const p = document.createElement('p');
+        p.className = 'mb-2 small';
+        const b = document.createElement('strong');
+        b.textContent = 'Cycles: ';
+        p.appendChild(b);
+        p.appendChild(document.createTextNode(txt));
+        body.appendChild(p);
+      } catch (_) {}
+    }
+
+    // Per-lane projects
+    if (d.lane_projects_json) {
+      try {
+        const lp = JSON.parse(d.lane_projects_json);
+        if (Object.keys(lp).length) {
+          const p = document.createElement('p');
+          p.className = 'mb-3 small';
+          const b = document.createElement('strong');
+          b.textContent = 'Projects per lane: ';
+          p.appendChild(b);
+          p.appendChild(document.createTextNode(
+            Object.entries(lp).map(([k,v]) => `L${k}: ${v.join(', ')}`).join(' · ')
+          ));
+          body.appendChild(p);
+        }
+      } catch (_) {}
+    }
+
+    // Collapsible: full manifest JSON
+    if (d.manifest_json) {
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.className = 'small text-muted';
+      summary.textContent = 'Full RunManifest.json (' +
+        Math.round(d.manifest_json.length / 1024) + ' KB)';
+      details.appendChild(summary);
+      const pre = document.createElement('pre');
+      pre.className = 'small bg-light p-2 mt-2 mb-0';
+      pre.style.maxHeight = '40vh';
+      pre.style.overflow = 'auto';
+      try {
+        pre.textContent = JSON.stringify(JSON.parse(d.manifest_json), null, 2);
+      } catch (_) {
+        pre.textContent = d.manifest_json;
+      }
+      details.appendChild(pre);
+      body.appendChild(details);
+    }
+  }
+
   show(1);
 })();
 </script>
+
+<!-- Run metadata modal -->
+<div class="modal fade" id="runModal" tabindex="-1" aria-labelledby="runModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="runModalLabel">Run details</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="runModalBody">
+        <div class="text-muted py-3">Loading…</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

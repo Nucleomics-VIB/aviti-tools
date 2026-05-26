@@ -16,8 +16,10 @@ from pathlib import Path
 from flask import Flask, jsonify, render_template, request
 
 from config_loader import env_config_path, load
-from db import JobsDAO
-from discovery import iter_validated, read_run_start, scan_nas_for_runs
+from db import JobsDAO, RunsMetadataDAO
+from discovery import (
+    iter_validated, read_run_metadata, read_run_start, scan_nas_for_runs,
+)
 from masks_loader import load_builtin_masks
 from users_loader import load_users
 
@@ -27,6 +29,7 @@ def create_app() -> Flask:
     app = Flask(__name__, static_folder="static", template_folder="templates")
     app.config["WEBUI_CONFIG"] = cfg
     app.config["DAO"] = JobsDAO(cfg.db_path)
+    app.config["RUNS_DAO"] = RunsMetadataDAO(cfg.db_path)
 
     @app.context_processor
     def inject_globals() -> dict:
@@ -121,15 +124,31 @@ def create_app() -> Flask:
             for c in candidates
         ]
         pag = _paginate(rows, page, per_page)
-        # Enrich only the slice the client will see with the precise
-        # instrument-reported start timestamp (RunParameters.Date).
+        # Enrich + upsert metadata only for the slice the client will see.
+        # Cheap when the row already exists (one indexed SELECT + UPDATE).
+        runs_dao: RunsMetadataDAO = app.config["RUNS_DAO"]
         for row in pag["items"]:
-            row["run_start"] = read_run_start(Path(row["path"]))
+            meta = read_run_metadata(Path(row["path"]))
+            if meta:
+                runs_dao.upsert(meta["run_internal_id"], meta["fields"])
+                row["run_internal_id"] = meta["run_internal_id"]
+                row["run_start"] = meta["fields"].get("run_start")
+            else:
+                row["run_internal_id"] = None
+                row["run_start"] = read_run_start(Path(row["path"]))
         return jsonify({
             "runs": pag["items"],
             "pagination": {k: v for k, v in pag.items() if k != "items"},
             "warnings": warnings,
         })
+
+    @app.get("/api/v1/runs/<run_internal_id>")
+    def get_run_detail(run_internal_id: str):
+        runs_dao: RunsMetadataDAO = app.config["RUNS_DAO"]
+        row = runs_dao.get(run_internal_id)
+        if row is None:
+            return jsonify({"error": "unknown run"}), 404
+        return jsonify(row)
 
     @app.get("/api/v1/runs/validated")
     def get_runs_validated():
