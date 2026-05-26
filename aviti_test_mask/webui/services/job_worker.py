@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import signal
+import sqlite3
 import subprocess
 import threading
 import time
@@ -371,9 +372,62 @@ class JobWorker:
         self.dao.update(aj.job_id, state=state,
                         finished_at=utc_now_iso(),
                         error_message=err)
-        # Mask results parsing is deferred — the integrator writes a CSV
-        # into <session>/mask_integration_summary.csv. Persisting per-row
-        # mask_results from that CSV lands with the Results page.
+        if rc == 0:
+            self._persist_mask_results(aj)
+
+    def _persist_mask_results(self, aj: _ActiveJob) -> None:
+        """Parse <session>/mask_integration_summary.csv → mask_results table.
+        Best mask + score also bubble up to the jobs row so the History
+        page can rank without re-reading the CSV.
+        """
+        csv_path = aj.session_dir / "mask_integration_summary.csv"
+        if not csv_path.exists():
+            log.warning("job %s: integrator OK but summary CSV missing", aj.job_id)
+            return
+        try:
+            import csv as _csv
+            with csv_path.open("r", encoding="utf-8", newline="") as fh:
+                rows = list(_csv.DictReader(fh))
+        except OSError as exc:
+            log.warning("job %s: cannot read summary CSV: %s", aj.job_id, exc)
+            return
+
+        def _f(v: str) -> float | None:
+            if v is None or v == "":
+                return None
+            try:
+                return float(v)
+            except ValueError:
+                return None
+
+        best_mask: str | None = None
+        best_score: float | None = None
+        for r in rows:
+            mask = (r.get("Mask") or "").strip()
+            if not mask:
+                continue
+            score = _f(r.get("Score") or "")
+            try:
+                self.dao.add_mask_result(
+                    aj.job_id, mask,
+                    lane="all",
+                    status="ok",
+                    q30_pct=_f(r.get("Q30%") or ""),
+                    assigned_pct=_f(r.get("%Assigned") or ""),
+                    score=score,
+                    source=(r.get("Source") or None),
+                )
+            except (ValueError, sqlite3.IntegrityError) as exc:
+                log.warning("job %s mask %s: insert failed: %s",
+                            aj.job_id, mask, exc)
+                continue
+            if score is not None and (best_score is None or score > best_score):
+                best_score = score
+                best_mask = mask
+        if best_mask is not None:
+            self.dao.update(aj.job_id,
+                            best_mask=best_mask,
+                            best_score=best_score)
 
     # ── Cancellation ─────────────────────────────────────────────────
 

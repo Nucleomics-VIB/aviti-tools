@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Settings — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h4 mb-1">⚙️ Settings</h1>
+    <div class="small text-muted">
+      Visual preferences only. Stored in this browser (localStorage) —
+      not on the server. Server-side config (NAS path, concurrency
+      limits, retention) lives in <code>webui/config/webui_config.yaml</code>.
+    </div>
+  </div>
+  <div>
+    <a href="/api/v1/config" class="btn btn-sm btn-outline-secondary py-0" target="_blank">
+      View server config (JSON)
+    </a>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <h2 class="h6">Page sizes</h2>
+    <div class="row g-3 align-items-end">
+      <div class="col-md-4">
+        <label for="runs-per-page" class="form-label small">Runs per page</label>
+        <select id="runs-per-page" class="form-select form-select-sm">
+          <option value="10">10</option>
+          <option value="25">25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label for="history-per-page" class="form-label small">History rows per page</label>
+        <select id="history-per-page" class="form-select form-select-sm">
+          <option value="10">10</option>
+          <option value="20">20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <h2 class="h6">Auto-refresh</h2>
+    <div class="row g-3 align-items-end">
+      <div class="col-md-4">
+        <label for="queue-refresh-ms" class="form-label small">Queue auto-refresh interval</label>
+        <select id="queue-refresh-ms" class="form-select form-select-sm">
+          <option value="0">Off</option>
+          <option value="1000">1 second</option>
+          <option value="3000">3 seconds (default)</option>
+          <option value="5000">5 seconds</option>
+          <option value="10000">10 seconds</option>
+        </select>
+        <div class="form-text small">
+          Paused automatically while any modal is open.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="d-flex gap-2">
+  <button id="save-btn" type="button" class="btn btn-primary btn-sm">Save</button>
+  <button id="reset-btn" type="button" class="btn btn-outline-secondary btn-sm">Reset to defaults</button>
+  <span id="save-result" class="small text-success align-self-center"></span>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  const DEFAULTS = {
+    runs_per_page: 10,
+    history_per_page: 20,
+    queue_refresh_ms: 3000,
+  };
+  function load() {
+    try {
+      return Object.assign({}, DEFAULTS,
+        JSON.parse(localStorage.getItem('aviti_ui_prefs') || '{}'));
+    } catch (e) {
+      return Object.assign({}, DEFAULTS);
+    }
+  }
+  function apply(p) {
+    document.getElementById('runs-per-page').value = p.runs_per_page;
+    document.getElementById('history-per-page').value = p.history_per_page;
+    document.getElementById('queue-refresh-ms').value = p.queue_refresh_ms;
+  }
+  apply(load());
+  document.getElementById('save-btn').addEventListener('click', () => {
+    const p = {
+      runs_per_page: +document.getElementById('runs-per-page').value,
+      history_per_page: +document.getElementById('history-per-page').value,
+      queue_refresh_ms: +document.getElementById('queue-refresh-ms').value,
+    };
+    localStorage.setItem('aviti_ui_prefs', JSON.stringify(p));
+    const r = document.getElementById('save-result');
+    r.textContent = 'Saved. Affected pages will pick up on next reload.';
+    setTimeout(() => { r.textContent = ''; }, 4000);
+  });
+  document.getElementById('reset-btn').addEventListener('click', () => {
+    localStorage.removeItem('aviti_ui_prefs');
+    apply(DEFAULTS);
+    const r = document.getElementById('save-result');
+    r.textContent = 'Reset to defaults.';
+    setTimeout(() => { r.textContent = ''; }, 4000);
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}Results — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h4 mb-1">📊 Mask results</h1>
+    <div class="small text-muted">
+      Job <code id="job-id-label">{{ job_id }}</code>
+    </div>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <a href="/history" class="btn btn-sm btn-outline-secondary py-0">← History</a>
+    <a id="resubmit-link" class="btn btn-sm btn-outline-secondary py-0"
+       href="/resubmit/{{ job_id }}">📋 Re-submit</a>
+    <button id="view-log" type="button" class="btn btn-sm btn-outline-info py-0">📜 View log</button>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h6 mb-2">Job summary</h2>
+        <dl class="row small mb-0" id="job-summary">
+          <dt class="col-4">Run</dt><dd class="col-8" id="js-run">—</dd>
+          <dt class="col-4">Submitter</dt><dd class="col-8" id="js-submitter">—</dd>
+          <dt class="col-4">State</dt><dd class="col-8" id="js-state">—</dd>
+          <dt class="col-4">Submitted</dt><dd class="col-8" id="js-submitted">—</dd>
+          <dt class="col-4">Finished</dt><dd class="col-8" id="js-finished">—</dd>
+          <dt class="col-4">Duration</dt><dd class="col-8" id="js-duration">—</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card h-100 border-success">
+      <div class="card-body">
+        <h2 class="h6 mb-2">🎯 Recommended mask</h2>
+        <div class="display-6 mb-1" id="rec-mask">—</div>
+        <div class="small text-muted">
+          Score <span id="rec-score" class="fw-bold">—</span>
+          (out of <span id="rec-total">—</span> masks)
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header py-2 d-flex justify-content-between align-items-center">
+    <span class="small">Per-mask metrics — sorted by score (higher = better)</span>
+    <span class="small text-muted">Score = %Assigned × Q30% / 100</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 align-middle small">
+        <thead class="table-light small">
+          <tr>
+            <th>Rank</th>
+            <th>Mask</th>
+            <th>Lane</th>
+            <th class="text-end" title="Reads assigned percentage">%Assigned</th>
+            <th class="text-end">Q30%</th>
+            <th class="text-end">Score</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody id="results-tbody">
+          <tr><td colspan="7" class="text-center text-muted py-3">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Log modal -->
+<div class="modal fade" id="logModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Job log</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <pre id="logModalBody" class="small bg-light p-2 mb-0"
+             style="max-height: 60vh; overflow: auto; white-space: pre-wrap;">Loading…</pre>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  const JOB_ID = {{ job_id|tojson }};
+
+  function fmtNum(x, digits) {
+    if (x == null || x === '') return '—';
+    const n = +x;
+    return Number.isFinite(n) ? n.toFixed(digits) : String(x);
+  }
+  function fmtDur(s) {
+    if (s == null) return '—';
+    s = +s;
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+    return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+  }
+
+  async function load() {
+    let data;
+    try {
+      const r = await fetch('/api/v1/jobs/' + encodeURIComponent(JOB_ID) + '/results');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      data = await r.json();
+    } catch (e) {
+      const tbody = document.getElementById('results-tbody');
+      tbody.replaceChildren();
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 7;
+      td.className = 'text-danger text-center py-3';
+      td.textContent = 'Error: ' + e.message;
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+
+    const j = data.job;
+    document.getElementById('js-run').textContent = j.run_id;
+    document.getElementById('js-submitter').textContent = j.submitter;
+    document.getElementById('js-state').textContent = j.state;
+    document.getElementById('js-submitted').textContent = j.submitted_at || '—';
+    document.getElementById('js-finished').textContent = j.finished_at || '—';
+    document.getElementById('js-duration').textContent = fmtDur(j.duration_seconds);
+    document.getElementById('rec-mask').textContent = j.best_mask || '—';
+    document.getElementById('rec-score').textContent = fmtNum(j.best_score, 2);
+    document.getElementById('rec-total').textContent = j.mask_count;
+
+    const tbody = document.getElementById('results-tbody');
+    tbody.replaceChildren();
+    if (!data.results.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 7;
+      td.className = 'text-center text-muted py-3';
+      td.textContent = 'No per-mask results yet — integrator may not have run.';
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+    data.results.forEach((r, i) => {
+      const tr = document.createElement('tr');
+      if (i === 0) tr.className = 'table-success';
+      const rank = document.createElement('td');
+      rank.textContent = (i + 1);
+      tr.appendChild(rank);
+      const maskTd = document.createElement('td');
+      const code = document.createElement('code');
+      code.textContent = r.mask;
+      maskTd.appendChild(code);
+      tr.appendChild(maskTd);
+      const laneTd = document.createElement('td');
+      laneTd.textContent = r.lane;
+      tr.appendChild(laneTd);
+      const assigned = document.createElement('td');
+      assigned.className = 'text-end';
+      assigned.textContent = fmtNum(r.assigned_pct, 2);
+      tr.appendChild(assigned);
+      const q30 = document.createElement('td');
+      q30.className = 'text-end';
+      q30.textContent = fmtNum(r.q30_pct, 2);
+      tr.appendChild(q30);
+      const score = document.createElement('td');
+      score.className = 'text-end fw-bold';
+      score.textContent = fmtNum(r.score, 2);
+      tr.appendChild(score);
+      const src = document.createElement('td');
+      src.className = 'text-muted';
+      src.textContent = r.source || '—';
+      tr.appendChild(src);
+      tbody.appendChild(tr);
+    });
+  }
+
+  document.getElementById('view-log').addEventListener('click', async () => {
+    const body = document.getElementById('logModalBody');
+    body.textContent = 'Loading…';
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('logModal'));
+    modal.show();
+    try {
+      const r = await fetch('/api/v1/jobs/' + encodeURIComponent(JOB_ID) + '/log');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      body.textContent = d.log || '(empty)';
+    } catch (e) {
+      body.textContent = 'Error: ' + e.message;
+    }
+  });
+
+  load();
+})();
+</script>
+{% endblock %}

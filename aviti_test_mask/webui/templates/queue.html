@@ -512,8 +512,15 @@
     }
   });
 
-  // Auto-refresh: poll the queue every 3 s as long as there's at least
-  // one active or queued job AND no modal is currently shown.
+  // Auto-refresh interval comes from Settings (localStorage) — 0 disables.
+  function readPref(key, fallback) {
+    try {
+      const p = JSON.parse(localStorage.getItem('aviti_ui_prefs') || '{}');
+      const v = +p[key];
+      return Number.isFinite(v) && v >= 0 ? v : fallback;
+    } catch (e) { return fallback; }
+  }
+  const refreshMs = readPref('queue_refresh_ms', 3000);
   function anyModalOpen() {
     return !!document.querySelector('.modal.show');
   }
@@ -522,11 +529,13 @@
       r.state === 'running' || r.state === 'integrating' ||
       r.state === 'stopping' || r.state === 'queued');
   }
-  setInterval(() => {
-    if (anyModalOpen()) return;
-    if (!shouldAutoRefresh()) return;
-    reload();
-  }, 3000);
+  if (refreshMs > 0) {
+    setInterval(() => {
+      if (anyModalOpen()) return;
+      if (!shouldAutoRefresh()) return;
+      reload();
+    }, refreshMs);
+  }
 
   reload();
 })();

@@ -63,6 +63,37 @@ def get_queue():
     return jsonify({"jobs": jobs, "total": len(jobs)})
 
 
+@bp.get("/jobs")
+def list_jobs():
+    """Paginated jobs listing for the History page.
+
+    Query params: page, per_page, state (repeatable), submitter,
+    since (ISO8601).
+    """
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+        per_page = max(1, min(int(request.args.get("per_page", "20")), 100))
+    except ValueError:
+        page, per_page = 1, 20
+    states = request.args.getlist("state") or None
+    submitter = request.args.get("submitter") or None
+    since = request.args.get("since") or None
+    rows, total = _dao().list(
+        states=states, submitter=submitter, since=since,
+        limit=per_page, offset=(page - 1) * per_page,
+        order_by="submitted_at DESC",
+    )
+    last_page = max(1, (total + per_page - 1) // per_page)
+    return jsonify({
+        "jobs": rows,
+        "pagination": {
+            "page": page, "per_page": per_page, "total": total,
+            "last_page": last_page,
+            "has_prev": page > 1, "has_next": page < last_page,
+        },
+    })
+
+
 @bp.get("/jobs/recent_failures")
 def get_recent_failures():
     dao = _dao()
@@ -72,6 +103,35 @@ def get_recent_failures():
                         since=since, limit=20,
                         order_by="submitted_at DESC")
     return jsonify({"jobs": rows, "total": len(rows)})
+
+
+@bp.get("/jobs/<job_id>/results")
+def get_job_results(job_id: str):
+    dao = _dao()
+    row = dao.get(job_id)
+    if row is None:
+        return jsonify({"error": "unknown job"}), 404
+    with dao._connect() as conn:  # type: ignore[attr-defined]
+        cur = conn.execute(
+            "SELECT mask, lane, project, status, q30_pct, assigned_pct, "
+            "score, source, error_msg "
+            "FROM mask_results WHERE job_id=:j "
+            "ORDER BY (score IS NULL), score DESC, mask ASC",
+            {"j": job_id})
+        results = [dict(r) for r in cur.fetchall()]
+    return jsonify({
+        "job": {
+            "job_id": row["job_id"], "run_id": row["run_id"],
+            "submitter": row["submitter"], "state": row["state"],
+            "submitted_at": row["submitted_at"],
+            "finished_at": row["finished_at"],
+            "duration_seconds": row["duration_seconds"],
+            "best_mask": row["best_mask"], "best_score": row["best_score"],
+            "mask_count": row["mask_count"],
+        },
+        "results": results,
+        "total": len(results),
+    })
 
 
 @bp.get("/jobs/<job_id>/log")

@@ -41,6 +41,21 @@ def queue_page():
     return render_template("queue.html")
 
 
+@bp.get("/history")
+def history_page():
+    return render_template("history.html")
+
+
+@bp.get("/results/<job_id>")
+def results_page(job_id: str):
+    return render_template("results.html", job_id=job_id)
+
+
+@bp.get("/settings")
+def settings_page():
+    return render_template("settings.html")
+
+
 @bp.get("/submit/<run_internal_id>")
 def submit_form(run_internal_id: str):
     cfg = _cfg()

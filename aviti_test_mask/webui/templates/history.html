@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% block title %}History — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h4 mb-1">📜 Job history</h1>
+    <div class="small text-muted">
+      All submitted jobs, newest first. Click View log to inspect a session
+      or Re-submit to clone its parameters into a new submission.
+    </div>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <select id="state-filter" class="form-select form-select-sm" style="width: 11em;">
+      <option value="">all states</option>
+      <option value="done">done</option>
+      <option value="failed">failed</option>
+      <option value="cancelled">cancelled</option>
+      <option value="running">running</option>
+      <option value="queued">queued</option>
+      <option value="integrating">integrating</option>
+      <option value="deleted">deleted</option>
+    </select>
+    <input id="submitter-filter" type="text" class="form-control form-control-sm"
+           placeholder="submitter…" style="width: 10em;" autocomplete="off">
+    <button id="refresh-btn" type="button" class="btn btn-sm btn-outline-secondary py-0">↻</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 align-middle small">
+        <thead class="table-light small">
+          <tr>
+            <th>Submitted</th>
+            <th>User</th>
+            <th>Run</th>
+            <th>State</th>
+            <th title="Number of masks attempted">Masks</th>
+            <th>Best mask</th>
+            <th title="Score = %Assigned × Q30% / 100">Best score</th>
+            <th>Duration</th>
+            <th class="text-end"></th>
+          </tr>
+        </thead>
+        <tbody id="history-tbody">
+          <tr><td colspan="9" class="text-center text-muted py-3">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<nav class="d-flex justify-content-between align-items-center mt-3 small">
+  <span id="pager-summary" class="text-muted">—</span>
+  <div class="btn-group">
+    <button id="prev-page" class="btn btn-sm btn-outline-secondary py-0" disabled>◀ Prev</button>
+    <button id="next-page" class="btn btn-sm btn-outline-secondary py-0" disabled>Next ▶</button>
+  </div>
+</nav>
+
+<!-- Log modal (reused from queue) -->
+<div class="modal fade" id="logModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="logModalLabel">Job log</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <pre id="logModalBody" class="small bg-light p-2 mb-0"
+             style="max-height: 60vh; overflow: auto; white-space: pre-wrap;">Loading…</pre>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  const tbody = document.getElementById('history-tbody');
+  const stateSel = document.getElementById('state-filter');
+  const submInput = document.getElementById('submitter-filter');
+  const prevBtn = document.getElementById('prev-page');
+  const nextBtn = document.getElementById('next-page');
+  const refresh = document.getElementById('refresh-btn');
+  const pagerSummary = document.getElementById('pager-summary');
+  let page = 1;
+  function readPref(key, fallback) {
+    try {
+      const p = JSON.parse(localStorage.getItem('aviti_ui_prefs') || '{}');
+      const v = +p[key];
+      return Number.isFinite(v) && v > 0 ? v : fallback;
+    } catch (e) { return fallback; }
+  }
+  const perPage = readPref('history_per_page', 20);
+
+  function cell(text, cls) {
+    const td = document.createElement('td');
+    if (cls) td.className = cls;
+    td.textContent = (text == null || text === '') ? '—' : String(text);
+    return td;
+  }
+
+  function statePill(state) {
+    const map = {
+      done: 'bg-success',
+      failed: 'bg-danger',
+      cancelled: 'bg-secondary',
+      running: 'bg-primary',
+      queued: 'bg-secondary',
+      paused: 'bg-warning text-dark',
+      integrating: 'bg-info text-dark',
+      stopping: 'bg-warning text-dark',
+      deleted: 'bg-light text-muted border',
+    };
+    const span = document.createElement('span');
+    span.className = 'badge ' + (map[state] || 'bg-light text-dark border');
+    span.textContent = state;
+    return span;
+  }
+
+  function fmtDuration(sec) {
+    if (sec == null) return '—';
+    const s = +sec;
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h + 'h ' + m + 'm';
+  }
+
+  function fmtScore(x) {
+    if (x == null || x === '') return '—';
+    const n = +x;
+    return Number.isFinite(n) ? n.toFixed(2) : String(x);
+  }
+
+  async function openLogModal(jobId) {
+    const body = document.getElementById('logModalBody');
+    document.getElementById('logModalLabel').textContent = 'Job log — ' + jobId;
+    body.textContent = 'Loading…';
+    const modalEl = document.getElementById('logModal');
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+    try {
+      const r = await fetch('/api/v1/jobs/' + encodeURIComponent(jobId) + '/log');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      body.textContent = d.log || '(empty)';
+    } catch (e) {
+      body.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  async function load() {
+    const params = new URLSearchParams();
+    params.set('page', page);
+    params.set('per_page', perPage);
+    if (stateSel.value) params.append('state', stateSel.value);
+    if (submInput.value.trim()) params.set('submitter', submInput.value.trim());
+    let data;
+    try {
+      const r = await fetch('/api/v1/jobs?' + params.toString());
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      data = await r.json();
+    } catch (e) {
+      tbody.replaceChildren();
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 9;
+      td.className = 'text-danger text-center py-3';
+      td.textContent = 'Error: ' + e.message;
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+    tbody.replaceChildren();
+    if (!data.jobs.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 9;
+      td.className = 'text-center text-muted py-3';
+      td.textContent = 'No jobs match.';
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    } else {
+      for (const j of data.jobs) {
+        const tr = document.createElement('tr');
+        tr.appendChild(cell(j.submitted_at));
+        tr.appendChild(cell(j.submitter));
+        const tdRun = document.createElement('td');
+        const code = document.createElement('code');
+        code.textContent = j.run_id;
+        tdRun.appendChild(code);
+        tr.appendChild(tdRun);
+        const tdState = document.createElement('td');
+        tdState.appendChild(statePill(j.state));
+        tr.appendChild(tdState);
+        tr.appendChild(cell(j.mask_count));
+        const tdBest = document.createElement('td');
+        if (j.best_mask) {
+          const code2 = document.createElement('code');
+          code2.textContent = j.best_mask;
+          tdBest.appendChild(code2);
+        } else {
+          tdBest.textContent = '—';
+          tdBest.className = 'text-muted';
+        }
+        tr.appendChild(tdBest);
+        tr.appendChild(cell(fmtScore(j.best_score)));
+        tr.appendChild(cell(fmtDuration(j.duration_seconds)));
+        // Actions
+        const tdAct = document.createElement('td');
+        tdAct.className = 'text-end text-nowrap';
+        const grp = document.createElement('div');
+        grp.className = 'btn-group';
+        if (j.best_mask) {
+          const view = document.createElement('a');
+          view.className = 'btn btn-sm btn-outline-primary py-0';
+          view.title = 'View per-mask results';
+          view.textContent = '📊';
+          view.href = '/results/' + encodeURIComponent(j.job_id);
+          grp.appendChild(view);
+        }
+        const log = document.createElement('button');
+        log.type = 'button';
+        log.className = 'btn btn-sm btn-outline-info py-0';
+        log.title = 'Tail run.log';
+        log.textContent = '📜';
+        log.addEventListener('click', () => openLogModal(j.job_id));
+        grp.appendChild(log);
+        const re = document.createElement('a');
+        re.className = 'btn btn-sm btn-outline-secondary py-0';
+        re.title = 'Re-submit with the same parameters';
+        re.textContent = '📋';
+        re.href = '/resubmit/' + encodeURIComponent(j.job_id);
+        grp.appendChild(re);
+        tdAct.appendChild(grp);
+        tr.appendChild(tdAct);
+        tbody.appendChild(tr);
+      }
+    }
+    const pg = data.pagination;
+    pagerSummary.textContent =
+      `${data.jobs.length} of ${pg.total} — page ${pg.page} / ${pg.last_page}`;
+    prevBtn.disabled = !pg.has_prev;
+    nextBtn.disabled = !pg.has_next;
+  }
+
+  prevBtn.addEventListener('click', () => { if (page > 1) { page--; load(); }});
+  nextBtn.addEventListener('click', () => { page++; load(); });
+  refresh.addEventListener('click', () => load());
+  stateSel.addEventListener('change', () => { page = 1; load(); });
+  let typingTimer;
+  submInput.addEventListener('input', () => {
+    clearTimeout(typingTimer);
+    typingTimer = setTimeout(() => { page = 1; load(); }, 250);
+  });
+  load();
+})();
+</script>
+{% endblock %}

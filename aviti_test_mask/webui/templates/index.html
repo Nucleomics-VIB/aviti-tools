@@ -105,7 +105,13 @@
 // prefetched in the background as soon as the current page lands, so Next is
 // instantaneous on click.
 (function () {
-  const PER_PAGE = 10;
+  const PER_PAGE = (function () {
+    try {
+      const p = JSON.parse(localStorage.getItem('aviti_ui_prefs') || '{}');
+      const v = +p.runs_per_page;
+      return Number.isFinite(v) && v > 0 ? v : 10;
+    } catch (e) { return 10; }
+  })();
   const cache = new Map();
   let currentPage = 1;
   let lastPage = 1;
