@@ -17,26 +17,34 @@
 <div class="row">
   <div class="col-md-8">
     <div class="card mb-3">
-      <div class="card-header">🚀 Submit a new QC suite</div>
-      <div class="card-body">
-        <p class="text-muted">
-          The submission form is built in a follow-up iteration. The backend
-          API is live — verify with
-          <a href="/api/v1/health"><code>/api/v1/health</code></a>.
-        </p>
-        <ul>
-          <li><a href="/api/v1/runs">/api/v1/runs</a> — discovered candidate runs</li>
-          <li><a href="/api/v1/runs/validated">/api/v1/runs/validated</a> — same list with full validation</li>
-          <li><a href="/api/v1/masks">/api/v1/masks</a> — built-in masks</li>
-          <li><a href="/api/v1/users">/api/v1/users</a> — lab members allowlist</li>
-          <li><a href="/api/v1/config">/api/v1/config</a> — effective configuration</li>
-        </ul>
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>🧬 Recent AVITI runs</span>
+        <small class="text-muted" id="runs-total"></small>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Sequencer</th>
+              <th>Run ID</th>
+              <th class="text-end">Modified</th>
+            </tr>
+          </thead>
+          <tbody id="runs-tbody">
+            <tr><td colspan="3" class="text-center text-muted py-3">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card-footer d-flex justify-content-between align-items-center">
+        <button id="runs-prev" class="btn btn-sm btn-outline-secondary" disabled>← Prev</button>
+        <span id="runs-page" class="text-muted small"></span>
+        <button id="runs-next" class="btn btn-sm btn-outline-secondary" disabled>Next →</button>
       </div>
     </div>
   </div>
 
   <div class="col-md-4">
-    <div class="card">
+    <div class="card mb-3">
       <div class="card-header">ℹ️ Build info</div>
       <div class="card-body small">
         <div><strong>Version:</strong> {{ app_version }}</div>
@@ -49,6 +57,131 @@
         </div>
       </div>
     </div>
+
+    <div class="card">
+      <div class="card-header">🔌 API endpoints</div>
+      <div class="card-body small">
+        <ul class="mb-0">
+          <li><a href="/api/v1/health">/health</a></li>
+          <li><a href="/api/v1/runs?page=1&per_page=10">/runs</a></li>
+          <li><a href="/api/v1/runs/validated?page=1&per_page=10">/runs/validated</a></li>
+          <li><a href="/api/v1/masks">/masks</a></li>
+          <li><a href="/api/v1/users">/users</a></li>
+          <li><a href="/api/v1/config">/config</a></li>
+        </ul>
+      </div>
+    </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Paginated run list. First page renders synchronously; subsequent pages are
+// prefetched in the background as soon as the current page lands, so Next is
+// instantaneous on click.
+(function () {
+  const PER_PAGE = 10;
+  const cache = new Map();
+  let currentPage = 1;
+  let lastPage = 1;
+
+  function fmtDate(epoch) {
+    const d = new Date(epoch * 1000);
+    return d.toISOString().slice(0, 16).replace('T', ' ');
+  }
+
+  function cell(tag, text, cls) {
+    const td = document.createElement('td');
+    if (cls) td.className = cls;
+    const el = tag ? document.createElement(tag) : td;
+    if (tag === 'span' && cls === 'badge bg-secondary') el.className = cls;
+    el.textContent = text;
+    if (tag) { td.className = cls && tag === 'span' ? '' : (cls || ''); td.appendChild(el); }
+    return td;
+  }
+
+  function emptyRow(message, isError) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 3;
+    td.className = 'text-center py-3 ' + (isError ? 'text-danger' : 'text-muted');
+    td.textContent = message;
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function render(payload) {
+    const { runs, pagination } = payload;
+    const tbody = document.getElementById('runs-tbody');
+    tbody.replaceChildren();
+    if (!runs.length) {
+      tbody.appendChild(emptyRow('No runs.', false));
+    } else {
+      for (const r of runs) {
+        const tr = document.createElement('tr');
+        // Sequencer badge
+        const tdSeq = document.createElement('td');
+        const badge = document.createElement('span');
+        badge.className = 'badge bg-secondary';
+        badge.textContent = r.sequencer;
+        tdSeq.appendChild(badge);
+        tr.appendChild(tdSeq);
+        // Run ID in <code>
+        const tdRun = document.createElement('td');
+        const code = document.createElement('code');
+        code.textContent = r.run_id;
+        tdRun.appendChild(code);
+        tr.appendChild(tdRun);
+        // Mtime
+        const tdM = document.createElement('td');
+        tdM.className = 'text-end text-muted';
+        tdM.textContent = fmtDate(r.mtime);
+        tr.appendChild(tdM);
+        tbody.appendChild(tr);
+      }
+    }
+    document.getElementById('runs-total').textContent =
+      `${pagination.total} runs · page ${pagination.page} / ${pagination.last_page}`;
+    document.getElementById('runs-page').textContent =
+      `Page ${pagination.page} of ${pagination.last_page}`;
+    document.getElementById('runs-prev').disabled = !pagination.has_prev;
+    document.getElementById('runs-next').disabled = !pagination.has_next;
+    currentPage = pagination.page;
+    lastPage = pagination.last_page;
+  }
+
+  async function fetchPage(page) {
+    if (cache.has(page)) return cache.get(page);
+    const r = await fetch(`/api/v1/runs?page=${page}&per_page=${PER_PAGE}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    cache.set(page, data);
+    return data;
+  }
+
+  function prefetch(page) {
+    if (page < 1 || page > lastPage || cache.has(page)) return;
+    fetchPage(page).catch(() => {});
+  }
+
+  async function show(page) {
+    try {
+      const data = await fetchPage(page);
+      render(data);
+      // Warm the next page in the background.
+      prefetch(currentPage + 1);
+    } catch (e) {
+      const tbody = document.getElementById('runs-tbody');
+      tbody.replaceChildren();
+      tbody.appendChild(emptyRow('Error: ' + e.message, true));
+    }
+  }
+
+  document.getElementById('runs-prev').addEventListener('click', () => show(currentPage - 1));
+  document.getElementById('runs-next').addEventListener('click', () => show(currentPage + 1));
+
+  show(1);
+})();
+</script>
 {% endblock %}

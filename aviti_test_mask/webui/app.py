@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 
 from config_loader import env_config_path, load
 from db import JobsDAO
@@ -80,42 +80,89 @@ def create_app() -> Flask:
             for m in masks
         ]})
 
+    def _paginate(items: list, page: int, per_page: int) -> dict:
+        total = len(items)
+        per_page = max(1, min(per_page, 100))
+        last_page = max(1, (total + per_page - 1) // per_page)
+        page = max(1, min(page, last_page))
+        start = (page - 1) * per_page
+        end = start + per_page
+        return {
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "last_page": last_page,
+            "has_prev": page > 1,
+            "has_next": page < last_page,
+            "items": items[start:end],
+        }
+
+    def _page_args() -> tuple[int, int]:
+        try:
+            page = int(request.args.get("page", "1"))
+            per_page = int(request.args.get("per_page", "10"))
+        except ValueError:
+            page, per_page = 1, 10
+        return page, per_page
+
     @app.get("/api/v1/runs")
     def get_runs():
         candidates, warnings = scan_nas_for_runs(cfg)
+        page, per_page = _page_args()
+        rows = [
+            {
+                "run_id": c.run_id,
+                "sequencer": c.sequencer,
+                "path": str(c.path),
+                "mtime": c.mtime,
+                "validated": False,
+            }
+            for c in candidates
+        ]
+        pag = _paginate(rows, page, per_page)
         return jsonify({
-            "runs": [
-                {
-                    "run_id": c.run_id,
-                    "sequencer": c.sequencer,
-                    "path": str(c.path),
-                    "mtime": c.mtime,
-                    "validated": False,
-                }
-                for c in candidates
-            ],
-            "count": len(candidates),
+            "runs": pag["items"],
+            "pagination": {k: v for k, v in pag.items() if k != "items"},
             "warnings": warnings,
         })
 
     @app.get("/api/v1/runs/validated")
     def get_runs_validated():
-        valid, invalid = [], []
-        for cand in iter_validated(cfg):
-            entry = {
-                "run_id": cand.run_id,
-                "sequencer": cand.sequencer,
-                "path": str(cand.path),
-                "mtime": cand.mtime,
-                "meta": cand.meta,
-                "first_failure": cand.first_failure,
+        # Validation is expensive — paginate over the discovery list first,
+        # validate only the page we're returning, so /runs/validated stays
+        # responsive even when 95 candidates are present.
+        candidates, warnings = scan_nas_for_runs(cfg)
+        page, per_page = _page_args()
+        rows = [
+            {
+                "run_id": c.run_id,
+                "sequencer": c.sequencer,
+                "path": str(c.path),
+                "mtime": c.mtime,
+                "_candidate": c,
             }
-            (valid if cand.is_valid else invalid).append(entry)
+            for c in candidates
+        ]
+        pag = _paginate(rows, page, per_page)
+
+        from discovery import validate_run as _validate
+        valid, invalid = [], []
+        for entry in pag["items"]:
+            cand = entry.pop("_candidate")
+            result = _validate(cand.path, cfg)
+            entry["meta"] = result["meta"]
+            entry["first_failure"] = (
+                result["first_failure"]["name"]
+                if result["first_failure"] else None
+            )
+            (valid if result["valid"] else invalid).append(entry)
         return jsonify({
             "valid": valid,
             "invalid": invalid,
             "count_valid": len(valid),
             "count_invalid": len(invalid),
+            "pagination": {k: v for k, v in pag.items() if k != "items"},
+            "warnings": warnings,
         })
 
     return app
