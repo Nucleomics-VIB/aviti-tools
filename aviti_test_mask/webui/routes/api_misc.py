@@ -1,4 +1,4 @@
-"""Misc API endpoints — /health, /config, /users, /masks.
+"""Misc API endpoints — /health, /config, /users, /masks, /monitor.
 
 Part of aviti_test_mask — VIB Nucleomics Core.
 Author: Stephane Plaisance <stephane.plaisance@vib.be>
@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import subprocess as _sp
 from dataclasses import asdict
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify
 
+from services.db import JobsDAO
 from services.discovery import check_nas_mount
 from services.masks_loader import load_builtin_masks
 from services.users_loader import load_users
@@ -71,6 +73,51 @@ def get_users():
     cfg = _cfg()
     users = load_users(cfg.users_file)
     return jsonify({"users": [asdict(u) for u in users]})
+
+
+@bp.get("/monitor")
+def get_monitor():
+    """Aggregate stats for the Monitor page.
+
+    Computed live off the SQLite jobs table — no separate stats table.
+    Cheap because the DB stays small (jobs accumulate at a few per
+    sequencing run, not at request scale).
+    """
+    dao: JobsDAO = current_app.config["DAO"]
+    now = datetime.utcnow()
+    iso_24h = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    iso_7d = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    overall = dao.stats()
+    last_24h = dao.stats(since=iso_24h)
+    last_7d = dao.stats(since=iso_7d)
+    with dao._connect() as conn:  # type: ignore[attr-defined]
+        avg_done = conn.execute(
+            "SELECT AVG(duration_seconds) FROM jobs WHERE state='done'"
+        ).fetchone()[0]
+        best_masks = [
+            {"mask": r["best_mask"], "count": r["c"]}
+            for r in conn.execute(
+                "SELECT best_mask, COUNT(*) AS c FROM jobs "
+                "WHERE best_mask IS NOT NULL "
+                "GROUP BY best_mask ORDER BY c DESC LIMIT 10"
+            )
+        ]
+        recent_done = [
+            dict(r) for r in conn.execute(
+                "SELECT job_id, run_id, submitter, submitted_at, "
+                "finished_at, best_mask, best_score, duration_seconds "
+                "FROM jobs WHERE state='done' "
+                "ORDER BY finished_at DESC LIMIT 5"
+            )
+        ]
+    return jsonify({
+        "overall": overall,
+        "last_24h": last_24h,
+        "last_7d": last_7d,
+        "avg_done_seconds": int(avg_done) if avg_done is not None else None,
+        "top_best_masks": best_masks,
+        "recent_done": recent_done,
+    })
 
 
 @bp.get("/masks")

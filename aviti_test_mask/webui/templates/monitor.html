@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block title %}Monitor — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h4 mb-1">📊 Monitor</h1>
+    <div class="small text-muted">
+      Job throughput + best-mask frequency. Computed live from the
+      jobs table — refreshed manually.
+    </div>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <small class="text-muted" id="monitor-updated"></small>
+    <button id="refresh-btn" class="btn btn-sm btn-outline-secondary py-0">↻ Refresh</button>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h6 mb-2">Jobs by state — all time</h2>
+        <table class="table table-sm small mb-0" id="t-overall"><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h6 mb-2">Last 24h</h2>
+        <table class="table table-sm small mb-0" id="t-24h"><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h6 mb-2">Last 7 days</h2>
+        <table class="table table-sm small mb-0" id="t-7d"><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h6 mb-2">Top best masks (lifetime)</h2>
+        <div class="small text-muted mb-2">
+          How many done jobs picked each mask as recommended.
+        </div>
+        <table class="table table-sm small mb-0">
+          <thead><tr><th>Mask</th><th class="text-end">Jobs</th></tr></thead>
+          <tbody id="t-best-masks"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h6 mb-2">Done-job timing</h2>
+        <dl class="row small mb-0">
+          <dt class="col-6">Average wall-clock duration</dt>
+          <dd class="col-6" id="m-avg-duration">—</dd>
+          <dt class="col-6">Done in last 24h</dt>
+          <dd class="col-6" id="m-done-24h">—</dd>
+          <dt class="col-6">Done in last 7d</dt>
+          <dd class="col-6" id="m-done-7d">—</dd>
+          <dt class="col-6">Done lifetime</dt>
+          <dd class="col-6" id="m-done-all">—</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <h2 class="h6 mb-2">Recent done jobs</h2>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 align-middle small">
+        <thead class="table-light">
+          <tr>
+            <th>Finished</th>
+            <th>User</th>
+            <th>Run</th>
+            <th>Best mask</th>
+            <th class="text-end">Score</th>
+            <th>Duration</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="t-recent-done">
+          <tr><td colspan="7" class="text-muted text-center py-3">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  function fmtDur(s) {
+    if (s == null) return '—';
+    s = +s;
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+    return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+  }
+  function fmtNum(x, digits) {
+    if (x == null || x === '') return '—';
+    const n = +x;
+    return Number.isFinite(n) ? n.toFixed(digits) : String(x);
+  }
+
+  function fillByState(tbodyId, by_state) {
+    const tbody = document.querySelector('#' + tbodyId + ' tbody');
+    tbody.replaceChildren();
+    const states = Object.keys(by_state).sort();
+    if (!states.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 2;
+      td.className = 'text-muted text-center';
+      td.textContent = '(no jobs)';
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+    let total = 0;
+    for (const s of states) total += by_state[s];
+    for (const s of states) {
+      const tr = document.createElement('tr');
+      const tdState = document.createElement('td');
+      const span = document.createElement('span');
+      span.className = 'badge bg-light text-dark border';
+      span.textContent = s;
+      tdState.appendChild(span);
+      tr.appendChild(tdState);
+      const tdCount = document.createElement('td');
+      tdCount.className = 'text-end';
+      tdCount.textContent = by_state[s];
+      tr.appendChild(tdCount);
+      tbody.appendChild(tr);
+    }
+    const trTotal = document.createElement('tr');
+    trTotal.className = 'fw-bold';
+    const tdLabel = document.createElement('td');
+    tdLabel.textContent = 'total';
+    trTotal.appendChild(tdLabel);
+    const tdNum = document.createElement('td');
+    tdNum.className = 'text-end';
+    tdNum.textContent = total;
+    trTotal.appendChild(tdNum);
+    tbody.appendChild(trTotal);
+  }
+
+  async function load() {
+    let data;
+    try {
+      const r = await fetch('/api/v1/monitor');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      data = await r.json();
+    } catch (e) {
+      console.error(e);
+      return;
+    }
+    fillByState('t-overall', data.overall.by_state);
+    fillByState('t-24h', data.last_24h.by_state);
+    fillByState('t-7d', data.last_7d.by_state);
+    document.getElementById('m-avg-duration').textContent = fmtDur(data.avg_done_seconds);
+    document.getElementById('m-done-24h').textContent = data.last_24h.by_state.done || 0;
+    document.getElementById('m-done-7d').textContent = data.last_7d.by_state.done || 0;
+    document.getElementById('m-done-all').textContent = data.overall.by_state.done || 0;
+
+    // Top best masks
+    const tbm = document.getElementById('t-best-masks');
+    tbm.replaceChildren();
+    if (!data.top_best_masks.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 2;
+      td.className = 'text-muted text-center';
+      td.textContent = '(no done jobs yet)';
+      tr.appendChild(td);
+      tbm.appendChild(tr);
+    } else {
+      for (const row of data.top_best_masks) {
+        const tr = document.createElement('tr');
+        const tdMask = document.createElement('td');
+        const code = document.createElement('code');
+        code.textContent = row.mask;
+        tdMask.appendChild(code);
+        tr.appendChild(tdMask);
+        const tdCount = document.createElement('td');
+        tdCount.className = 'text-end';
+        tdCount.textContent = row.count;
+        tr.appendChild(tdCount);
+        tbm.appendChild(tr);
+      }
+    }
+
+    // Recent done
+    const trd = document.getElementById('t-recent-done');
+    trd.replaceChildren();
+    if (!data.recent_done.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 7;
+      td.className = 'text-muted text-center py-3';
+      td.textContent = 'No done jobs yet.';
+      tr.appendChild(td);
+      trd.appendChild(tr);
+    } else {
+      for (const j of data.recent_done) {
+        const tr = document.createElement('tr');
+        const mk = (text) => { const td = document.createElement('td'); td.textContent = text == null ? '—' : text; return td; };
+        tr.appendChild(mk(j.finished_at));
+        tr.appendChild(mk(j.submitter));
+        const tdRun = document.createElement('td');
+        const code = document.createElement('code');
+        code.textContent = j.run_id;
+        tdRun.appendChild(code);
+        tr.appendChild(tdRun);
+        const tdMask = document.createElement('td');
+        if (j.best_mask) {
+          const code2 = document.createElement('code');
+          code2.textContent = j.best_mask;
+          tdMask.appendChild(code2);
+        } else {
+          tdMask.textContent = '—';
+        }
+        tr.appendChild(tdMask);
+        const tdScore = document.createElement('td');
+        tdScore.className = 'text-end';
+        tdScore.textContent = fmtNum(j.best_score, 2);
+        tr.appendChild(tdScore);
+        tr.appendChild(mk(fmtDur(j.duration_seconds)));
+        const tdAct = document.createElement('td');
+        tdAct.className = 'text-end';
+        const link = document.createElement('a');
+        link.href = '/results/' + encodeURIComponent(j.job_id);
+        link.className = 'btn btn-sm btn-outline-primary py-0';
+        link.textContent = '📊';
+        link.title = 'Open results';
+        tdAct.appendChild(link);
+        tr.appendChild(tdAct);
+        trd.appendChild(tr);
+      }
+    }
+    document.getElementById('monitor-updated').textContent =
+      'updated ' + new Date().toLocaleTimeString();
+  }
+
+  document.getElementById('refresh-btn').addEventListener('click', load);
+  load();
+})();
+</script>
+{% endblock %}

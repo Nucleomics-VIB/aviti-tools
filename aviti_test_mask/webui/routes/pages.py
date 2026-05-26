@@ -56,6 +56,11 @@ def settings_page():
     return render_template("settings.html")
 
 
+@bp.get("/monitor")
+def monitor_page():
+    return render_template("monitor.html")
+
+
 @bp.get("/submit/<run_internal_id>")
 def submit_form(run_internal_id: str):
     cfg = _cfg()
