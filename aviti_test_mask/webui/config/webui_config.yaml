@@ -21,9 +21,9 @@ run_age_days: 365
 deep_validate: false                       # gate optional zip magic-byte check
 
 # --- Storage paths ---
-results_root: /tmp/aviti_test_mask_results # dev default; chicken uses /data/analyses/aviti_test_mask
-jobs_dir: /tmp/aviti_test_mask_results     # same as results_root in single-user deploy
-db_path: /tmp/aviti_test_mask_results/jobs.db
+results_root: ~/aviti_test_mask_results    # Mac dev: must be inside $HOME so colima
+jobs_dir: ~/aviti_test_mask_results        # passes the path through to docker;
+db_path: ~/aviti_test_mask_results/jobs.db # Ubuntu prod uses /data/analyses/aviti_test_mask
 
 # --- Concurrency ---
 # Mac-dev defaults (M2 with colima emulating linux/amd64). The amd64
