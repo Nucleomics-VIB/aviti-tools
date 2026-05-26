@@ -152,6 +152,64 @@ def create_app() -> Flask:
         flash(f"Job {job_id} queued. (Worker not yet implemented — row created in DB.)", "success")
         return redirect(url_for("submit_form", run_internal_id=run_internal_id))
 
+    @app.get("/queue")
+    def queue_page():
+        return render_template("queue.html")
+
+    @app.get("/api/v1/queue")
+    def get_queue():
+        dao: JobsDAO = app.config["DAO"]
+        rows, total = dao.list(
+            states=["queued", "running", "stopping", "integrating"],
+            limit=200,
+            order_by="submitted_at ASC",
+        )
+        # Compute simple 1-based queue position for the queued ones.
+        pos = 0
+        for r in rows:
+            if r["state"] == "queued":
+                pos += 1
+                r["queue_position"] = pos
+            else:
+                r["queue_position"] = None
+        return jsonify({"jobs": rows, "total": total})
+
+    @app.delete("/api/v1/jobs/<job_id>")
+    def delete_job(job_id: str):
+        dao: JobsDAO = app.config["DAO"]
+        row = dao.get(job_id)
+        if row is None:
+            return jsonify({"error": "unknown job"}), 404
+        if row["state"] in ("done", "failed", "cancelled", "deleted"):
+            return jsonify({"error": f"cannot delete {row['state']!r} job"}), 409
+        if row["state"] == "queued":
+            from db import utc_now_iso
+            dao.update(job_id, state="cancelled",
+                       cancelled_by=row["submitter"],
+                       finished_at=utc_now_iso(),
+                       error_message="cancelled before start")
+        else:
+            # Running / stopping / integrating — graceful drain (no worker yet,
+            # so we just mark state for now).
+            dao.update(job_id, state="stopping", cancelled_by=row["submitter"])
+        return jsonify({"ok": True})
+
+    @app.post("/api/v1/queue/clear")
+    def clear_queue():
+        if request.args.get("confirm") != "CLEAR":
+            return jsonify({"error": "missing confirm=CLEAR"}), 400
+        dao: JobsDAO = app.config["DAO"]
+        # Snapshot first so we can report a count.
+        rows, _ = dao.list(states=["queued"], limit=10000, order_by="submitted_at ASC")
+        from db import utc_now_iso
+        now = utc_now_iso()
+        for r in rows:
+            dao.update(r["job_id"], state="cancelled",
+                       cancelled_by=r["submitter"],
+                       finished_at=now,
+                       error_message="cleared via /queue")
+        return jsonify({"deleted": len(rows)})
+
     @app.get("/api/v1/health")
     def health():
         nas_ok = cfg.nas_root.exists() and cfg.nas_root.is_dir()

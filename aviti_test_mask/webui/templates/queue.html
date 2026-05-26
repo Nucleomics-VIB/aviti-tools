@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block title %}Queue — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h4 mb-1">🕒 Job queue</h1>
+    <div class="small text-muted">
+      Active jobs only — queued, running, integrating, stopping.
+      Completed / failed runs are visible on the History page.
+    </div>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <small class="text-muted" id="queue-updated"></small>
+    <button id="queue-refresh" type="button" class="btn btn-sm btn-outline-secondary py-0">↻ Refresh</button>
+    <button id="queue-clear-btn" type="button" class="btn btn-sm btn-outline-danger py-0">
+      ⚠ Clear queue
+    </button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 align-middle small">
+        <thead class="table-light small">
+          <tr>
+            <th>#</th>
+            <th>Submitted</th>
+            <th>User</th>
+            <th>Run</th>
+            <th>Masks</th>
+            <th>Tiles</th>
+            <th>Cache</th>
+            <th>State</th>
+            <th class="text-end"></th>
+          </tr>
+        </thead>
+        <tbody id="queue-tbody">
+          <tr><td colspan="9" class="text-center text-muted py-3">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Clear queue modal -->
+<div class="modal fade" id="clearModal" tabindex="-1" aria-labelledby="clearModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="clearModalLabel">⚠ Clear the queue</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body small">
+        <p id="clear-summary" class="mb-2">…</p>
+        <p>Running jobs will not be touched. To confirm, type
+          <code>CLEAR</code> below:</p>
+        <input type="text" id="clear-confirm-input" class="form-control"
+               placeholder="type CLEAR to enable" autocomplete="off">
+        <div id="clear-result" class="mt-2 small text-muted"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" id="clear-confirm-btn" class="btn btn-danger btn-sm" disabled>
+          Clear N queued jobs
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  const tbody = document.getElementById('queue-tbody');
+  let lastRows = [];
+
+  function cell(text, cls) {
+    const td = document.createElement('td');
+    if (cls) td.className = cls;
+    td.textContent = (text == null || text === '') ? '—' : String(text);
+    return td;
+  }
+
+  function statePill(state) {
+    const map = {
+      queued:      'bg-secondary',
+      running:     'bg-primary',
+      integrating: 'bg-info text-dark',
+      stopping:    'bg-warning text-dark',
+    };
+    const span = document.createElement('span');
+    span.className = 'badge ' + (map[state] || 'bg-light text-dark border');
+    span.textContent = state;
+    return span;
+  }
+
+  async function fetchQueue() {
+    const r = await fetch('/api/v1/queue');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }
+
+  function render(rows) {
+    lastRows = rows;
+    tbody.replaceChildren();
+    if (!rows.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 9;
+      td.className = 'text-center text-muted py-3';
+      td.textContent = 'No active jobs.';
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+    for (const r of rows) {
+      const tr = document.createElement('tr');
+      tr.appendChild(cell(r.queue_position == null ? '' : r.queue_position));
+      tr.appendChild(cell(r.submitted_at));
+      tr.appendChild(cell(r.submitter));
+      // Run cell with code formatting
+      const tdRun = document.createElement('td');
+      const code = document.createElement('code'); code.textContent = r.run_id;
+      tdRun.appendChild(code); tr.appendChild(tdRun);
+      tr.appendChild(cell(r.mask_count + ' (' + r.masks_source + ')'));
+      tr.appendChild(cell(r.tiles_spec));
+      tr.appendChild(cell(r.cache_input ? 'yes' : 'no'));
+      // State pill
+      const tdState = document.createElement('td');
+      tdState.appendChild(statePill(r.state));
+      tr.appendChild(tdState);
+      // Delete action
+      const tdAct = document.createElement('td');
+      tdAct.className = 'text-end';
+      const del = document.createElement('button');
+      del.className = 'btn btn-sm btn-outline-danger py-0';
+      del.textContent = r.state === 'queued' ? 'Cancel' : 'Stop';
+      del.addEventListener('click', () => deleteJob(r.job_id, r.state));
+      tdAct.appendChild(del);
+      tr.appendChild(tdAct);
+      tbody.appendChild(tr);
+    }
+  }
+
+  async function deleteJob(jobId, state) {
+    const verb = state === 'queued' ? 'cancel' : 'stop';
+    if (!confirm(`${verb} job ${jobId}?`)) return;
+    const r = await fetch('/api/v1/jobs/' + encodeURIComponent(jobId), { method: 'DELETE' });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      alert('Error: ' + (e.error || r.status));
+      return;
+    }
+    await reload();
+  }
+
+  async function reload() {
+    try {
+      const data = await fetchQueue();
+      render(data.jobs);
+      document.getElementById('queue-updated').textContent =
+        'updated ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      tbody.replaceChildren();
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 9;
+      td.className = 'text-danger text-center py-3';
+      td.textContent = 'Error: ' + e.message;
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    }
+  }
+  document.getElementById('queue-refresh').addEventListener('click', reload);
+
+  // ── Clear queue modal ─────────────────────────────────────────────
+  const modalEl = document.getElementById('clearModal');
+  const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+  const confirmInput = document.getElementById('clear-confirm-input');
+  const confirmBtn = document.getElementById('clear-confirm-btn');
+  const summary = document.getElementById('clear-summary');
+  const result = document.getElementById('clear-result');
+
+  document.getElementById('queue-clear-btn').addEventListener('click', () => {
+    const queued = lastRows.filter(r => r.state === 'queued');
+    const users = new Set(queued.map(r => r.submitter));
+    summary.textContent = `This will cancel ${queued.length} queued jobs ` +
+      `owned by ${users.size} user${users.size === 1 ? '' : 's'}.`;
+    confirmBtn.textContent = `Clear ${queued.length} queued jobs`;
+    confirmBtn.disabled = true;
+    confirmInput.value = '';
+    result.textContent = '';
+    if (!queued.length) {
+      summary.textContent = 'No queued jobs to clear.';
+      confirmInput.disabled = true;
+    } else {
+      confirmInput.disabled = false;
+    }
+    modal.show();
+  });
+
+  confirmInput.addEventListener('input', () => {
+    confirmBtn.disabled = confirmInput.value !== 'CLEAR';
+  });
+
+  confirmBtn.addEventListener('click', async () => {
+    confirmBtn.disabled = true;
+    result.textContent = 'Working…';
+    try {
+      const r = await fetch('/api/v1/queue/clear?confirm=CLEAR', { method: 'POST' });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        result.className = 'mt-2 small text-danger';
+        result.textContent = 'Error: ' + (e.error || r.status);
+        return;
+      }
+      const d = await r.json();
+      result.className = 'mt-2 small text-success';
+      result.textContent = `Cleared ${d.deleted} jobs.`;
+      await reload();
+      setTimeout(() => modal.hide(), 800);
+    } catch (e) {
+      result.className = 'mt-2 small text-danger';
+      result.textContent = 'Error: ' + e.message;
+    }
+  });
+
+  reload();
+})();
+</script>
+{% endblock %}
