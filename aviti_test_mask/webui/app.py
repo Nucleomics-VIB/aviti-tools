@@ -134,15 +134,25 @@ def create_app() -> Flask:
             row["is_test"] = is_test_run(row["run_id"])
             if meta:
                 runs_dao.upsert(meta["run_internal_id"], meta["fields"])
+                f = meta["fields"]
                 row["run_internal_id"] = meta["run_internal_id"]
-                row["run_start"] = meta["fields"].get("run_start")
-                row["outcome"] = meta["fields"].get("outcome")
-                row["percent_pf"] = meta["fields"].get("percent_pf")
+                row["run_start"] = f.get("run_start")
+                row["outcome"] = f.get("outcome")
+                row["percent_pf"] = f.get("percent_pf")
+                row["run_description"] = f.get("run_description")
+                row["operator_name"] = f.get("operator_name")
+                row["throughput"] = f.get("throughput")
+                row["kit_config"] = f.get("kit_config")
+                row["chemistry_version"] = f.get("chemistry_version")
+                row["analysis_lanes"] = f.get("analysis_lanes")
+                row["total_yield"] = f.get("total_yield")
             else:
                 row["run_internal_id"] = None
                 row["run_start"] = read_run_start(p)
-                row["outcome"] = None
-                row["percent_pf"] = None
+                for k in ("outcome", "percent_pf", "run_description",
+                         "operator_name", "throughput", "kit_config",
+                         "chemistry_version", "analysis_lanes", "total_yield"):
+                    row[k] = None
             # Validation is the heaviest check per row (BaseCalls listdir +
             # stat per zip); cap it here so we only walk once per page.
             v = validate_run(p, cfg)
