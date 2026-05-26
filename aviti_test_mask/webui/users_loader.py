@@ -1,4 +1,8 @@
-"""Load the lab-members allowlist from users.yaml."""
+"""Load the lab-members allowlist from users.yaml.
+
+Part of aviti_test_mask — VIB Nucleomics Core.
+Author: Stephane Plaisance <stephane.plaisance@vib.be>
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass

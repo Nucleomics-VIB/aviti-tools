@@ -3,6 +3,9 @@
 Built-in masks come from masks.yaml (reused from the bash script). The UI
 also accepts uploaded lists and a single typed mask — all three go through
 the same regex validator before being persisted to a session masks.yaml.
+
+Part of aviti_test_mask — VIB Nucleomics Core.
+Author: Stephane Plaisance <stephane.plaisance@vib.be>
 """
 from __future__ import annotations
 

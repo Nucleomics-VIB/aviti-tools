@@ -3,6 +3,9 @@
 Backend foundation for the web UI described in
 [../dev_docs/plan_webui.md](../dev_docs/plan_webui.md).
 
+Part of **aviti_test_mask** — VIB Nucleomics Core.
+Author: Stephane Plaisance ([stephane.plaisance@vib.be](mailto:stephane.plaisance@vib.be))
+
 ## v1 scope
 
 Read-only HTTP API:

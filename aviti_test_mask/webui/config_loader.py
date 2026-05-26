@@ -2,6 +2,9 @@
 
 `webui_config.yaml` is read once at app startup into an immutable dataclass.
 Paths are resolved relative to the config file's location.
+
+Part of aviti_test_mask — VIB Nucleomics Core.
+Author: Stephane Plaisance <stephane.plaisance@vib.be>
 """
 from __future__ import annotations
 
@@ -14,6 +17,12 @@ import yaml
 
 @dataclass(frozen=True)
 class WebUIConfig:
+    app_name: str
+    app_version: str
+    release_date: str
+    org_name: str
+    support_email: str
+
     nas_root: Path
     sequencer_subdirs_glob: str
     run_folder_marker: str
@@ -56,6 +65,7 @@ def load(path: str | Path) -> WebUIConfig:
         raw = yaml.safe_load(fh) or {}
 
     required = [
+        "app_name", "app_version", "release_date", "org_name", "support_email",
         "nas_root", "sequencer_subdirs_glob", "run_folder_marker",
         "run_folder_regex", "run_age_days", "results_root", "jobs_dir",
         "db_path", "max_global_containers", "max_concurrent_jobs",
@@ -68,6 +78,11 @@ def load(path: str | Path) -> WebUIConfig:
         raise ValueError(f"webui_config.yaml missing required keys: {missing}")
 
     cfg = WebUIConfig(
+        app_name=str(raw["app_name"]),
+        app_version=str(raw["app_version"]),
+        release_date=str(raw["release_date"]),
+        org_name=str(raw["org_name"]),
+        support_email=str(raw["support_email"]),
         nas_root=_resolve(base, raw["nas_root"]),
         sequencer_subdirs_glob=raw["sequencer_subdirs_glob"],
         run_folder_marker=raw["run_folder_marker"],

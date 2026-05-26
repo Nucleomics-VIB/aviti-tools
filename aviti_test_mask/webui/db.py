@@ -4,13 +4,16 @@ Schema v1 — see ``dev_docs/plan_webui.md`` for the design rationale.
 WAL mode is enabled at first connection so readers don't block the
 writer. No ORM; raw SQL keeps the dependency surface small and the
 lock semantics transparent.
+
+Part of aviti_test_mask — VIB Nucleomics Core.
+Author: Stephane Plaisance <stephane.plaisance@vib.be>
 """
 from __future__ import annotations
 
 import json
 import sqlite3
 from contextlib import contextmanager
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields as dc_fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -44,6 +47,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   masks_failed        INTEGER DEFAULT 0,
   best_score          REAL,
   best_mask           TEXT,
+  lane_projects_json  TEXT NOT NULL DEFAULT '{}',  -- {"1": "P12345", "2": "P67890"}
   error_message       TEXT,
   cancelled_by        TEXT
 );
@@ -52,17 +56,25 @@ CREATE INDEX IF NOT EXISTS ix_jobs_state ON jobs(state);
 CREATE INDEX IF NOT EXISTS ix_jobs_submitter ON jobs(submitter);
 CREATE INDEX IF NOT EXISTS ix_jobs_submitted_at ON jobs(submitted_at);
 
+-- One row per (job, mask, lane). Lane is 'all' for the run-level aggregate
+-- and '1', '2', ... for per-lane metrics. The web UI lets the user load
+-- different projects on different lanes, so per-lane breakdown is the
+-- primary view; the 'all' row stays available for backwards-compat reports.
 CREATE TABLE IF NOT EXISTS mask_results (
   job_id        TEXT NOT NULL REFERENCES jobs(job_id) ON DELETE CASCADE,
   mask          TEXT NOT NULL,
+  lane          TEXT NOT NULL DEFAULT 'all',
+  project       TEXT,                              -- copied from jobs.lane_projects_json[lane]
   status        TEXT NOT NULL,
   q30_pct       REAL,
   assigned_pct  REAL,
   score         REAL,
   source        TEXT,
   error_msg     TEXT,
-  PRIMARY KEY (job_id, mask)
+  PRIMARY KEY (job_id, mask, lane)
 );
+CREATE INDEX IF NOT EXISTS ix_mask_results_lane ON mask_results(lane);
+CREATE INDEX IF NOT EXISTS ix_mask_results_project ON mask_results(project);
 
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY
@@ -73,6 +85,17 @@ VALID_STATES = {
     "queued", "running", "integrating",
     "stopping", "done", "failed", "cancelled", "deleted",
 }
+
+# Columns updatable via JobsDAO.update() — anything outside this set is rejected
+# to defeat caller-controlled column-name injection in the dynamic SQL builders.
+_JOB_UPDATABLE: frozenset[str] = frozenset({
+    "state", "queue_position", "tiles_spec", "started_at", "finished_at",
+    "duration_seconds", "exit_code", "masks_succeeded", "masks_failed",
+    "best_score", "best_mask", "error_message", "cancelled_by",
+})
+_MASK_RESULT_COLUMNS: frozenset[str] = frozenset({
+    "lane", "status", "q30_pct", "assigned_pct", "score", "source", "error_msg",
+})
 
 
 @dataclass
@@ -104,6 +127,9 @@ class JobRecord:
     best_mask: str | None = None
     error_message: str | None = None
     cancelled_by: str | None = None
+
+
+_JOB_COLUMNS: tuple[str, ...] = tuple(f.name for f in dc_fields(JobRecord))
 
 
 def utc_now_iso() -> str:
@@ -144,9 +170,10 @@ class JobsDAO:
     def insert(self, job: JobRecord) -> None:
         if job.state not in VALID_STATES:
             raise ValueError(f"invalid state {job.state!r}")
-        cols = list(asdict(job).keys())
+        # Column names come from JobRecord's declared fields — caller cannot inject.
+        cols = _JOB_COLUMNS
         placeholders = ",".join(f":{c}" for c in cols)
-        sql = f"INSERT INTO jobs ({','.join(cols)}) VALUES ({placeholders})"
+        sql = f"INSERT INTO jobs ({','.join(cols)}) VALUES ({placeholders})"  # noqa: S608
         with self._connect() as conn:
             conn.execute(sql, asdict(job))
 
@@ -155,11 +182,17 @@ class JobsDAO:
             raise ValueError(f"invalid state {fields['state']!r}")
         if not fields:
             return
+        bad = [k for k in fields if k not in _JOB_UPDATABLE]
+        if bad:
+            raise ValueError(f"unknown / non-updatable columns: {bad}")
         set_clause = ",".join(f"{k}=:{k}" for k in fields)
         params = dict(fields)
         params["job_id"] = job_id
         with self._connect() as conn:
-            conn.execute(f"UPDATE jobs SET {set_clause} WHERE job_id=:job_id", params)
+            conn.execute(
+                f"UPDATE jobs SET {set_clause} WHERE job_id=:job_id",  # noqa: S608
+                params,
+            )
 
     def get(self, job_id: str) -> dict | None:
         with self._connect() as conn:
@@ -214,12 +247,15 @@ class JobsDAO:
 
     def add_mask_result(self, job_id: str, mask: str, **fields: Any) -> None:
         fields.setdefault("status", "ok")
+        bad = [k for k in fields if k not in _MASK_RESULT_COLUMNS]
+        if bad:
+            raise ValueError(f"unknown mask_results columns: {bad}")
         cols = ["job_id", "mask"] + list(fields.keys())
         placeholders = ",".join(f":{c}" for c in cols)
         params = {"job_id": job_id, "mask": mask, **fields}
         with self._connect() as conn:
             conn.execute(
-                f"INSERT INTO mask_results ({','.join(cols)}) VALUES ({placeholders})",
+                f"INSERT INTO mask_results ({','.join(cols)}) VALUES ({placeholders})",  # noqa: S608
                 params,
             )
 

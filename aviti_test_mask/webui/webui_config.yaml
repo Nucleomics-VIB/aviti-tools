@@ -1,6 +1,16 @@
 # Web UI configuration. Loaded in addition to the script's config.yaml.
 # All paths are absolute. Dev defaults point at the Mac NAS mount;
 # the Ubuntu production host will override these via its own copy.
+#
+# Part of aviti_test_mask — VIB Nucleomics Core.
+# Author: Stephane Plaisance <stephane.plaisance@vib.be>
+
+# --- App metadata (shown in UI navbar, footer, /about, /api/v1/health) ---
+app_name: aviti_test_mask
+app_version: 0.1.0
+release_date: 2026-05-26
+org_name: VIB Nucleomics Core
+support_email: nucleomics@vib.be
 
 # --- NAS / run discovery ---
 nas_root: /Volumes/lvs/GBW-0047_NUC_Transfers/0003_Runs/Aviti

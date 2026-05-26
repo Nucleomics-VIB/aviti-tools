@@ -11,7 +11,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from discovery import scan_nas_for_runs, validate_run
+from discovery import (
+    extract_projects_from_run_id, is_test_run,
+    scan_nas_for_runs, validate_run,
+)
 
 
 def make_config(tmp_path: Path, deep_validate=False) -> SimpleNamespace:
@@ -118,6 +121,31 @@ def test_validate_empty_zip(tmp_path):
     result = validate_run(run, cfg)
     assert result["valid"] is False
     assert result["first_failure"]["name"] == "BaseCalls zip sizes"
+
+
+def test_extract_projects_single():
+    assert extract_projects_from_run_id("20260322_AV224503_5246_2") == ["5246"]
+
+
+def test_extract_projects_multi():
+    assert extract_projects_from_run_id("20260427_AV224503_5255_5261_1") == ["5255", "5261"]
+
+
+def test_extract_projects_skips_non_4digit():
+    # TEST runs have alpha tokens — should not be treated as projects
+    assert extract_projects_from_run_id("20260331_AV224503_TEST_Mock1_A") == []
+
+
+def test_extract_projects_unmatched_shape():
+    assert extract_projects_from_run_id("20260401_AV224503_upgradepv-a") == []
+    assert extract_projects_from_run_id("ConnectionTest") == []
+
+
+def test_is_test_run():
+    assert not is_test_run("20260322_AV224503_5246_2")
+    assert is_test_run("20260331_AV224503_TEST_Mock1_A")
+    assert is_test_run("20260401_AV224503_upgradepv-a")
+    assert is_test_run("ConnectionTest")
 
 
 def test_validate_missing_dir(tmp_path):

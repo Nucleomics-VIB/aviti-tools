@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ app_name }} — Submit a run{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+  <div class="col">
+    <h1 class="h3 mb-1">{{ app_name }}</h1>
+    <p class="text-muted mb-0">
+      <span class="badge bg-secondary">v{{ app_version }}</span>
+      <span class="ms-2">released {{ release_date }}</span>
+      <span class="ms-3">·</span>
+      <span class="ms-2">{{ org_name }}</span>
+    </p>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-md-8">
+    <div class="card mb-3">
+      <div class="card-header">🚀 Submit a new QC suite</div>
+      <div class="card-body">
+        <p class="text-muted">
+          The submission form is built in a follow-up iteration. The backend
+          API is live — verify with
+          <a href="/api/v1/health"><code>/api/v1/health</code></a>.
+        </p>
+        <ul>
+          <li><a href="/api/v1/runs">/api/v1/runs</a> — discovered candidate runs</li>
+          <li><a href="/api/v1/runs/validated">/api/v1/runs/validated</a> — same list with full validation</li>
+          <li><a href="/api/v1/masks">/api/v1/masks</a> — built-in masks</li>
+          <li><a href="/api/v1/users">/api/v1/users</a> — lab members allowlist</li>
+          <li><a href="/api/v1/config">/api/v1/config</a> — effective configuration</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-header">ℹ️ Build info</div>
+      <div class="card-body small">
+        <div><strong>Version:</strong> {{ app_version }}</div>
+        <div><strong>Released:</strong> {{ release_date }}</div>
+        <div><strong>Organisation:</strong> {{ org_name }}</div>
+        <div class="mt-2">
+          <strong>Author:</strong>
+          Stephane Plaisance
+          &lt;<a href="mailto:stephane.plaisance@vib.be">stephane.plaisance@vib.be</a>&gt;
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,15 +1,19 @@
 """Flask application skeleton for the aviti_test_mask web UI.
 
 v1 backend foundation: read-only GET endpoints driving discovery,
-configuration, and lookups. Job submission, queue management, and the
-HTML form are added in subsequent iterations.
+configuration, and lookups, plus the home + about pages. Job
+submission, queue management, and the full form land in subsequent
+iterations.
+
+Part of aviti_test_mask — VIB Nucleomics Core.
+Author: Stephane Plaisance <stephane.plaisance@vib.be>
 """
 from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template
 
 from config_loader import env_config_path, load
 from db import JobsDAO
@@ -24,11 +28,32 @@ def create_app() -> Flask:
     app.config["WEBUI_CONFIG"] = cfg
     app.config["DAO"] = JobsDAO(cfg.db_path)
 
+    @app.context_processor
+    def inject_globals() -> dict:
+        return {
+            "app_name": cfg.app_name,
+            "app_version": cfg.app_version,
+            "release_date": cfg.release_date,
+            "org_name": cfg.org_name,
+            "support_email": cfg.support_email,
+        }
+
+    @app.get("/")
+    def home():
+        return render_template("index.html")
+
+    @app.get("/about")
+    def about():
+        return render_template("about.html")
+
     @app.get("/api/v1/health")
     def health():
         nas_ok = cfg.nas_root.exists() and cfg.nas_root.is_dir()
         return jsonify({
             "status": "ok",
+            "app_name": cfg.app_name,
+            "app_version": cfg.app_version,
+            "release_date": cfg.release_date,
             "nas_root": str(cfg.nas_root),
             "nas_mounted": nas_ok,
             "db_path": str(cfg.db_path),
@@ -100,5 +125,7 @@ app = create_app()
 
 
 if __name__ == "__main__":
+    import os
     cfg = app.config["WEBUI_CONFIG"]
-    app.run(host=cfg.host, port=cfg.port, debug=True)
+    debug = os.environ.get("AVITI_WEBUI_DEBUG") == "1"
+    app.run(host=cfg.host, port=cfg.port, debug=debug)

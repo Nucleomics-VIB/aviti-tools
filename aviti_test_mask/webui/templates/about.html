@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}About — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-8">
+    <div class="card">
+      <div class="card-header">ℹ️ About {{ app_name }}</div>
+      <div class="card-body">
+
+        <div class="row mb-3">
+          <div class="col-sm-3 text-muted">Application</div>
+          <div class="col-sm-9"><strong>{{ app_name }}</strong></div>
+        </div>
+        <div class="row mb-3">
+          <div class="col-sm-3 text-muted">Version</div>
+          <div class="col-sm-9"><span class="badge bg-secondary">v{{ app_version }}</span></div>
+        </div>
+        <div class="row mb-3">
+          <div class="col-sm-3 text-muted">Organisation</div>
+          <div class="col-sm-9">{{ org_name }}</div>
+        </div>
+        <div class="row mb-3">
+          <div class="col-sm-3 text-muted">Author</div>
+          <div class="col-sm-9">Stephane Plaisance &lt;<a href="mailto:stephane.plaisance@vib.be">stephane.plaisance@vib.be</a>&gt;</div>
+        </div>
+        <div class="row mb-3">
+          <div class="col-sm-3 text-muted">Support</div>
+          <div class="col-sm-9"><a href="mailto:{{ support_email }}">{{ support_email }}</a></div>
+        </div>
+
+        <hr>
+
+        <p>
+          Web front-end for the <code>aviti_test_mask</code> toolchain — runs
+          <code>bases2fastq --qc-only</code> across a set of candidate masks
+          on an Element Biosciences AVITI sequencing run and ranks them by
+          a composite Q30 × %Assigned score.
+        </p>
+        <p class="text-muted small">
+          Built with Flask 3.x, Bootstrap 5, and SQLite. © {{ org_name }}.
+        </p>
+
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

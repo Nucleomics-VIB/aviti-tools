@@ -20,7 +20,7 @@ Selection policies, simplest → richest:
 | Lane preset | `--tiles lane:1` | `L1R..C..S.` |
 | All-lanes preset | `--tiles all` | `L.R..C..S.` |
 | Distributed sample | `--tiles spread:8` | 8 tiles spread across rows × cols × surfaces, OR'd into one pattern |
-| Random sample | `--tiles random:N[:seed]` | N tiles sampled from the run's actual tile inventory |
+| Random sample | `--tiles random:N[:seed]` | N tiles sampled from the run's actual tile inventory. **UI default: N=3**, exposed as a number input when random mode is picked. Seed is omitted by default (truly random each invocation). |
 
 Default: unchanged (single tile, bases2fastq default) — backwards-compatible.
 
@@ -41,9 +41,32 @@ for users who want sampling-with-replacement-style honesty.
 
 ---
 
+## Lane selection (orthogonal to tile selection)
+
+AVITI flowcells have multiple lanes (the dev run reports
+`AnalysisLanes: 1+2`). Users may want to test masks on:
+
+- **Lane 1 only** — `--lanes 1`
+- **Lane 2 only** — `--lanes 2`
+- **Both lanes (default)** — `--lanes all`
+
+Implementation: the `--lanes` flag composes with `--tiles`. For
+example, `--lanes 1 --tiles spread:3` resolves to a tile pattern that
+picks 3 spread tiles from lane 1 only. Internally the resolver filters
+the tile inventory by the `L<N>` prefix before sampling.
+
+**UI:** a small radio group above the tile selector (`Lane 1 / Lane 2
+/ Both`). Default `Both`. Persisted in the submission record so the
+History page can show which lanes were tested.
+
+**Validation:** the chosen lanes must exist in `RunParameters.Tiles`.
+If the user picks lane 2 on a run with lane-1-only tiles, reject with
+"this run has no lane-2 tiles."
+
 ## CLI / config surface
 
 **New flag:** `--tiles <spec>` (also `-t`)
+**New flag:** `--lanes <1|2|all>` (default `all`)
 
 `<spec>` accepts:
 - a raw bases2fastq pattern (contains `L` and digit/regex chars) → passthrough

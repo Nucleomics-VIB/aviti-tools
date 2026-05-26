@@ -6,6 +6,9 @@ Two pure functions:
 - ``validate_run(path, cfg)``: deep-ish validation that the run folder
   is complete enough for ``bases2fastq`` to process. Returns a result
   dict matching the schema in ``dev_docs/plan_webui.md``.
+
+Part of aviti_test_mask — VIB Nucleomics Core.
+Author: Stephane Plaisance <stephane.plaisance@vib.be>
 """
 from __future__ import annotations
 
@@ -42,6 +45,41 @@ class RunCandidate:
 
 def _is_run_folder_name(name: str, regex: re.Pattern) -> bool:
     return bool(regex.match(name))
+
+
+# Run-folder name shape: YYYYMMDD_AV<digits>_<project tokens joined by _>_<runseq>
+# Project numbers are 4-digit by default; non-4-digit tokens indicate test or
+# maintenance runs (e.g. "TEST_Mock1", "upgradepv-a").
+# Examples (observed on the dev NAS):
+#   20260322_AV224503_5246_2       → projects: ["5246"]                    (real)
+#   20260427_AV224503_5255_5261_1  → projects: ["5255", "5261"]            (multi)
+#   20260331_AV224503_TEST_Mock1_A → projects: []  is_test: True
+#   20260401_AV224503_upgradepv-a  → projects: []  is_test: True
+_PROJECT_REGEX = re.compile(r"^\d{8}_AV\d+_(.+)_[^_]+$")
+_PROJECT_NUMBER_RE = re.compile(r"^\d{4}$")
+
+
+def extract_projects_from_run_id(run_id: str) -> list[str]:
+    """Return the 4-digit project numbers found in the run folder name.
+
+    Empty list when no 4-digit token is present (test / maintenance runs).
+    Use ``is_test_run`` to distinguish unmatched-shape vs. test runs.
+    """
+    m = _PROJECT_REGEX.match(run_id)
+    if not m:
+        return []
+    tokens = [tok for tok in m.group(1).split("_") if tok]
+    return [tok for tok in tokens if _PROJECT_NUMBER_RE.match(tok)]
+
+
+def is_test_run(run_id: str) -> bool:
+    """True when the folder name has no 4-digit project token.
+
+    Covers both shape-matching folders with non-numeric tokens
+    (``TEST_*``) and folders that don't match the standard shape at all
+    (``upgradepv-a``, ``ConnectionTest``).
+    """
+    return not extract_projects_from_run_id(run_id)
 
 
 def scan_nas_for_runs(cfg: WebUIConfig) -> tuple[list[RunCandidate], list[str]]:

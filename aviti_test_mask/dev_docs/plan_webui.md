@@ -1107,16 +1107,41 @@ Inputs available after a successful job:
 
 Layout:
 
-1. **Header** — run name, instrument, mask count, total wall time.
-2. **Submitted parameters** — collapsed by default.
-3. **Ranked table** — sorted by `Score`, columns: rank, mask, %Assigned,
-   Q30%, score, source (csv|html|json), status (✓ or short error).
-4. **Per-mask cards** — one per row, linking to the raw QC report.
+1. **Header** — run name, instrument, mask count, total wall time,
+   lanes tested + per-lane project labels (e.g. `L1: P12345 · L2: P67890`).
+2. **Submitted parameters** — collapsed by default; includes the
+   user-supplied `lane → project` map.
+3. **Per-lane ranked tables** — one table per lane that was tested.
+   The lab loads different projects on different lanes, so per-lane is
+   the primary view. Each table titled with the lane's project label
+   (`Lane 1 · P12345`) and sorted by `Score` (mask, %Assigned, Q30%,
+   score, source, status). An additional "All lanes aggregate" table
+   appears at the bottom for legacy comparisons.
+4. **Per-mask cards** — one per mask, linking to the raw QC report.
 5. **Log tail** — last 200 lines of `run.log`.
-6. **Download** — link to the CSV and to a zip of `qc_runs/`.
+6. **Download** — links to per-lane CSVs + the aggregate CSV + a zip
+   of `qc_runs/`.
 
-Renderer is a single Jinja2 template (`results.html.j2`) so the same code
-runs in Stage 1 and Stage 2.
+Renderer is a single Jinja2 template (`results.html.j2`) so the same
+code runs in Stage 1 and Stage 2.
+
+### Per-lane project labels — schema impact
+
+The submission form gains a small **Lanes → Project** table: one row
+per lane in `RunParameters.Tiles`, with a free-text "project" field
+the user fills in (typically a project number like `P12345` or a
+short name). Defaults blank; not required, but strongly encouraged.
+
+Persistence:
+- The `jobs` table gains `lane_projects_json TEXT` (e.g.
+  `{"1": "P12345", "2": "P67890"}`), defaulting to `'{}'`.
+- The `mask_results` table gains a `project TEXT` column populated by
+  the integrator from `lane_projects_json[lane]` — denormalised so
+  the History/Monitor pages can filter/group by project without a
+  join into JSON.
+
+This lets users answer "which mask wins for project P12345 across all
+its runs" with one indexed query.
 
 ---
 
