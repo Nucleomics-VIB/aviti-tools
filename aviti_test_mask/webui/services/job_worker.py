@@ -82,7 +82,9 @@ def _extract_error_message(log_path: Path, rc: int, *,
 class _ActiveJob:
     job_id: str
     submitter: str
-    process: subprocess.Popen
+    # None when reattached after a server restart (the original Popen
+    # handle is gone — exit is observed by polling docker instead).
+    process: subprocess.Popen | None
     session_dir: Path
 
 
@@ -120,18 +122,104 @@ class JobWorker:
                     self._send_signal(aj, signal.SIGTERM)
 
     def _reap_stale_on_startup(self) -> None:
-        """Mark any non-terminal row left over from a previous process."""
+        """Recover or fail any non-terminal row left over from a previous
+        process. A job whose docker container (matched by the
+        aviti_job_id label) is still up gets reattached: a daemon
+        thread polls the container until it exits, then runs the
+        normal post-exit / integrator flow. A job with no matching
+        container is marked failed as before.
+        """
         leftover_states = ["running", "integrating", "stopping"]
         rows, _ = self.dao.list(states=leftover_states, limit=1000)
         for r in rows:
-            self.dao.update(
-                r["job_id"],
-                state="failed",
-                finished_at=utc_now_iso(),
-                error_message="server restarted mid-run (no reattach yet)",
+            jid = r["job_id"]
+            cid = self._find_running_container(jid)
+            if cid is None:
+                self.dao.update(
+                    jid, state="failed",
+                    finished_at=utc_now_iso(),
+                    error_message="server restarted mid-run; "
+                                  "no container found to reattach",
+                )
+                log.info("reaped stale job %s (state was %s)",
+                         jid, r["state"])
+                continue
+            session_dir = self.cfg.results_root / jid
+            log.info("reattaching job %s to container %s (state was %s)",
+                     jid, cid, r["state"])
+            t = threading.Thread(
+                target=self._reattach_thread,
+                args=(jid, cid, r.get("submitter") or "", session_dir),
+                daemon=True,
+                name=f"reattach-{jid[:16]}",
             )
-            log.info("reaped stale job %s (state was %s)",
-                     r["job_id"], r["state"])
+            t.start()
+
+    def _find_running_container(self, job_id: str) -> str | None:
+        try:
+            r = subprocess.run(
+                ["docker", "ps", "-q",
+                 "--filter", f"label=aviti_job_id={job_id}"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        cid = (r.stdout or "").strip().splitlines()
+        return cid[0] if cid else None
+
+    def _reattach_thread(self, job_id: str, container_id: str,
+                          submitter: str, session_dir: Path) -> None:
+        """Poll the surviving container; once it exits, run the normal
+        post-exit reconciliation by reading the run.log for the bash
+        script's exit summary, then trigger the integrator if needed.
+        We can't observe the bash script's actual exit code (the parent
+        process is gone), so we infer success / failure from the log's
+        trailing '📊 .../N succeeded | F failed' line.
+        """
+        while not self._stop.is_set():
+            try:
+                r = subprocess.run(
+                    ["docker", "inspect", "-f", "{{.State.Status}}",
+                     container_id],
+                    capture_output=True, text=True, timeout=10,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                self._stop.wait(POLL_INTERVAL_SECONDS)
+                continue
+            status = (r.stdout or "").strip()
+            if status not in ("running", "created", "restarting", "paused"):
+                break
+            self._stop.wait(POLL_INTERVAL_SECONDS)
+        # Container is gone. Reconstruct an _ActiveJob-shaped namespace
+        # so the existing post-exit + integrator path can run.
+        aj = _ActiveJob(job_id=job_id, submitter=submitter,
+                        process=None,  # type: ignore[arg-type]
+                        session_dir=session_dir)
+        log_path = session_dir / "run.log"
+        rc = self._infer_script_exit_from_log(log_path)
+        self._on_process_exit(aj, rc)
+
+    def _infer_script_exit_from_log(self, log_path: Path) -> int:
+        """Read the trailing '📊 X/N succeeded | F failed' line and
+        return 0 if F == 0 else 1. Falls back to 1 if the marker is
+        absent (container exited before the script summary)."""
+        try:
+            size = log_path.stat().st_size
+            with log_path.open("rb") as fh:
+                if size > 32 * 1024:
+                    fh.seek(-32 * 1024, 2)
+                tail = fh.read().decode("utf-8", errors="replace")
+        except OSError:
+            return 1
+        for line in reversed(tail.splitlines()):
+            if "succeeded" in line and "failed" in line and line.startswith("📊"):
+                # e.g. "📊 9/9 succeeded  |  0 failed"
+                try:
+                    fpart = line.split("|", 1)[1]
+                    return 0 if int(fpart.strip().split()[0]) == 0 else 1
+                except (IndexError, ValueError):
+                    return 1
+        return 1
 
     # ── Main loop ────────────────────────────────────────────────────
 
