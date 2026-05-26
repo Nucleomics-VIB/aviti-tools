@@ -13,7 +13,7 @@ import pytest
 
 from discovery import (
     extract_projects_from_run_id, is_test_run,
-    scan_nas_for_runs, validate_run,
+    resolve_tile_spec, scan_nas_for_runs, validate_run,
 )
 
 
@@ -146,6 +146,84 @@ def test_is_test_run():
     assert is_test_run("20260331_AV224503_TEST_Mock1_A")
     assert is_test_run("20260401_AV224503_upgradepv-a")
     assert is_test_run("ConnectionTest")
+
+
+def _write_tiles(run_path: Path, tiles: list[str]):
+    (run_path).mkdir(parents=True, exist_ok=True)
+    (run_path / "RunParameters.json").write_text(
+        json.dumps({"Tiles": tiles, "Cycles": {"R1": 1}})
+    )
+
+
+def test_resolve_tile_spec_default(tmp_path):
+    _write_tiles(tmp_path, ["L1R01C01S1", "L1R02C01S1"])
+    out = resolve_tile_spec(tmp_path, "default")
+    assert out == {"spec": "default", "pattern": None, "tiles": [], "count": 0}
+
+
+def test_resolve_tile_spec_all(tmp_path):
+    _write_tiles(tmp_path, ["L1R01C01S1"])
+    out = resolve_tile_spec(tmp_path, "all")
+    assert out["pattern"] == "L.R..C..S."
+    assert out["spec"] == "all"
+
+
+def test_resolve_tile_spec_lane(tmp_path):
+    _write_tiles(tmp_path, ["L1R01C01S1"])
+    out = resolve_tile_spec(tmp_path, "lane", tiles_lane=2)
+    assert out["pattern"] == "L2R..C..S."
+    assert out["spec"] == "lane:2"
+
+
+def test_resolve_tile_spec_spread_deterministic(tmp_path):
+    tiles = [f"L1R{r:02d}C01S1" for r in range(1, 11)]  # 10 tiles
+    _write_tiles(tmp_path, tiles)
+    out1 = resolve_tile_spec(tmp_path, "spread", tiles_n=3)
+    out2 = resolve_tile_spec(tmp_path, "spread", tiles_n=3)
+    assert out1["tiles"] == out2["tiles"]  # spread is deterministic
+    assert len(out1["tiles"]) == 3
+    assert "|" in out1["pattern"]
+    assert all(t in tiles for t in out1["tiles"])
+
+
+def test_resolve_tile_spec_random_size_and_pattern(tmp_path):
+    tiles = [f"L1R{r:02d}C01S1" for r in range(1, 11)]
+    _write_tiles(tmp_path, tiles)
+    out = resolve_tile_spec(tmp_path, "random", tiles_n=4)
+    assert len(out["tiles"]) == 4
+    assert out["pattern"] == "|".join(out["tiles"])
+    assert all(t in tiles for t in out["tiles"])
+
+
+def test_resolve_tile_spec_random_caps_at_total(tmp_path):
+    _write_tiles(tmp_path, ["L1R01C01S1", "L1R02C01S1"])
+    out = resolve_tile_spec(tmp_path, "random", tiles_n=10)
+    assert len(out["tiles"]) == 2  # capped at the actual inventory
+
+
+def test_resolve_tile_spec_lane_filter(tmp_path):
+    tiles = ["L1R01C01S1", "L1R02C01S1", "L2R01C01S1", "L2R02C01S1"]
+    _write_tiles(tmp_path, tiles)
+    out = resolve_tile_spec(tmp_path, "random", tiles_n=10, lanes="2")
+    assert {t[1] for t in out["tiles"]} == {"2"}
+
+
+def test_resolve_tile_spec_raw(tmp_path):
+    _write_tiles(tmp_path, [])
+    out = resolve_tile_spec(tmp_path, "raw", tiles_raw="L1R..C..S.")
+    assert out["pattern"] == "L1R..C..S."
+
+
+def test_resolve_tile_spec_raw_rejects_empty(tmp_path):
+    _write_tiles(tmp_path, [])
+    with pytest.raises(ValueError):
+        resolve_tile_spec(tmp_path, "raw", tiles_raw="")
+
+
+def test_resolve_tile_spec_unknown_mode_raises(tmp_path):
+    _write_tiles(tmp_path, [])
+    with pytest.raises(ValueError):
+        resolve_tile_spec(tmp_path, "bogus")
 
 
 def test_validate_missing_dir(tmp_path):

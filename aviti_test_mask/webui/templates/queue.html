@@ -154,7 +154,16 @@
       // Empty tiles_spec means the bases2fastq default — single tile, no
       // --include-tile flag. Render that explicitly so the column is
       // never visually empty.
-      tr.appendChild(cell(r.tiles_spec || 'single tile (default)'));
+      // Tiles: show the resolved spec + count of picked tiles when explicit.
+      // For "spread:N" / "random:N", append the chosen tiles in the tooltip.
+      const tdT = document.createElement('td');
+      tdT.textContent = r.tiles_spec || 'single tile (default)';
+      if (Array.isArray(r.tiles_picked) && r.tiles_picked.length) {
+        tdT.title = 'tiles: ' + r.tiles_picked.join(', ');
+      } else if (r.tiles_pattern) {
+        tdT.title = '--include-tile ' + r.tiles_pattern;
+      }
+      tr.appendChild(tdT);
       // Lanes (from params_json — 1 / 2 / all)
       tr.appendChild(cell(r.lanes === 'all' ? 'both' : ('L' + r.lanes)));
       // Execution params

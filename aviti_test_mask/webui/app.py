@@ -19,7 +19,7 @@ from config_loader import env_config_path, load
 from db import JobsDAO, RunsMetadataDAO
 from discovery import (
     is_test_run, iter_validated, read_run_metadata, read_run_start,
-    scan_nas_for_runs, validate_run,
+    resolve_tile_spec, scan_nas_for_runs, validate_run,
 )
 from masks_loader import load_builtin_masks
 from users_loader import load_users
@@ -139,21 +139,23 @@ def create_app() -> Flask:
             return redirect(url_for("submit_form", run_internal_id=run_internal_id))
 
         tiles_mode = form.get("tiles_mode", "default")
-        tiles_spec = ""
-        if tiles_mode == "all":
-            tiles_spec = "all"
-        elif tiles_mode == "lane":
-            tiles_spec = f"lane:{form.get('tiles_lane') or '1'}"
-        elif tiles_mode == "spread":
-            tiles_spec = f"spread:{form.get('tiles_n') or '3'}"
-        elif tiles_mode == "random":
-            tiles_spec = f"random:{form.get('tiles_n') or '3'}"
-        elif tiles_mode == "raw":
-            tiles_spec = (form.get("tiles_raw") or "").strip()
-
         lanes = form.get("lanes", "all")
+        try:
+            tile_resolution = resolve_tile_spec(
+                Path(run["run_path"]),
+                tiles_mode,
+                tiles_n=int(form.get("tiles_n") or 3),
+                tiles_lane=int(form.get("tiles_lane") or 1),
+                tiles_raw=form.get("tiles_raw"),
+                lanes=lanes,
+            )
+        except ValueError as exc:
+            flash(f"Tile selection error: {exc}", "danger")
+            return redirect(url_for("submit_form", run_internal_id=run_internal_id))
+        tiles_spec = tile_resolution["spec"]
+        tiles_pattern = tile_resolution["pattern"]
+        tiles_picked = tile_resolution["tiles"]
         lane_projects = _json.loads(run.get("lane_projects_json") or "{}")
-        # Future: respect user overrides; for v1 we just persist what's in DB.
 
         job_id = f"{run['run_id']}__{utc_now_iso().replace(':','-')}__{uuid.uuid4().hex[:6]}"
         record = JobRecord(
@@ -165,6 +167,8 @@ def create_app() -> Flask:
                 "lanes": lanes,
                 "tiles_mode": tiles_mode,
                 "tiles_spec": tiles_spec,
+                "tiles_pattern": tiles_pattern,   # concrete --include-tile arg (None = no flag)
+                "tiles_picked": tiles_picked,     # explicit tile list for spread/random
             }),
             masks_source=masks_source,
             masks_json=_json.dumps(masks_list),
@@ -208,6 +212,8 @@ def create_app() -> Flask:
                 p = {}
             r["lanes"] = p.get("lanes")
             r["tiles_mode"] = p.get("tiles_mode")
+            r["tiles_pattern"] = p.get("tiles_pattern")
+            r["tiles_picked"] = p.get("tiles_picked")
         active_states = {"running", "integrating", "stopping"}
         active = [r for r in rows if r["state"] in active_states]
         waiting = [r for r in rows if r["state"] not in active_states]
