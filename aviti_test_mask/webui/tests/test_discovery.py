@@ -194,11 +194,10 @@ def test_check_nas_mount_ok(tmp_path):
 def test_resolve_tile_spec_default_single_lane(tmp_path):
     _write_tiles(tmp_path, ["L1R02C01S1", "L1R01C01S1"])
     out = resolve_tile_spec(tmp_path, "default")
-    # Pattern still None — script keeps omitting --include-tile.
-    assert out["pattern"] is None
     assert out["spec"] == "default"
     # Predicted picks: first tile of each lane (sorted).
     assert out["tiles"] == ["L1R01C01S1"]
+    assert out["pattern"] == "L1R01C01S1"
     assert out["count"] == 1
 
 
@@ -206,8 +205,17 @@ def test_resolve_tile_spec_default_multi_lane(tmp_path):
     _write_tiles(tmp_path, ["L1R02C01S1", "L2R01C01S1",
                             "L1R01C01S1", "L2R02C01S1"])
     out = resolve_tile_spec(tmp_path, "default")
-    assert out["pattern"] is None
     assert out["tiles"] == ["L1R01C01S1", "L2R01C01S1"]
+    assert out["pattern"] == "L1R01C01S1|L2R01C01S1"
+
+
+def test_resolve_tile_spec_default_lane_filtered(tmp_path):
+    _write_tiles(tmp_path, ["L1R02C01S1", "L2R01C01S1",
+                            "L1R01C01S1", "L2R02C01S1"])
+    out = resolve_tile_spec(tmp_path, "default", lanes="1")
+    # Lane 1 only — single tile, single-tile pattern.
+    assert out["tiles"] == ["L1R01C01S1"]
+    assert out["pattern"] == "L1R01C01S1"
 
 
 def test_resolve_tile_spec_default_no_manifest_falls_back(tmp_path):
