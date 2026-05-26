@@ -29,13 +29,12 @@
       </div>
       <div class="card-body p-0">
       <div class="table-responsive">
-        <table class="table table-sm table-hover mb-0 align-middle">
+        <table class="table table-sm table-hover mb-0 align-middle small">
           <thead class="table-light">
             <tr>
               <th>Sequencer</th>
               <th>Run ID</th>
               <th>Desc</th>
-              <th>Operator</th>
               <th>Throughput</th>
               <th>Kit</th>
               <th>Chemistry</th>
@@ -47,7 +46,7 @@
             </tr>
           </thead>
           <tbody id="runs-tbody">
-            <tr><td colspan="12" class="text-center text-muted py-3">Loading…</td></tr>
+            <tr><td colspan="11" class="text-center text-muted py-3">Loading…</td></tr>
           </tbody>
         </table>
       </div>
@@ -166,7 +165,7 @@
   function emptyRow(message, isError) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 12;
+    td.colSpan = 11;
     td.className = 'text-center py-3 ' + (isError ? 'text-danger' : 'text-muted');
     td.textContent = message;
     tr.appendChild(td);
@@ -246,9 +245,8 @@
         code.textContent = r.run_id;
         tdRun.appendChild(code);
         tr.appendChild(tdRun);
-        // Description / Operator / Throughput / Kit / Chemistry
+        // Description / Throughput / Kit / Chemistry
         tr.appendChild(textCell(r.run_description, 'small'));
-        tr.appendChild(textCell(r.operator_name, 'small text-muted'));
         tr.appendChild(textCell(r.throughput, 'small'));
         tr.appendChild(textCell(r.kit_config, 'small'));
         tr.appendChild(textCell(r.chemistry_version, 'small'));
