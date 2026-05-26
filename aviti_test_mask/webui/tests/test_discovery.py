@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from discovery import (
-    extract_projects_from_run_id, is_test_run,
+    check_nas_mount, extract_projects_from_run_id, is_test_run,
     resolve_tile_spec, scan_nas_for_runs, validate_run,
 )
 
@@ -153,6 +153,42 @@ def _write_tiles(run_path: Path, tiles: list[str]):
     (run_path / "RunParameters.json").write_text(
         json.dumps({"Tiles": tiles, "Cycles": {"R1": 1}})
     )
+
+
+def test_check_nas_mount_missing(tmp_path):
+    cfg = make_config(tmp_path / "does-not-exist")
+    res = check_nas_mount(cfg)
+    assert res["ok"] is False
+    assert res["status"] == "missing"
+
+
+def test_check_nas_mount_empty_no_sequencers(tmp_path):
+    cfg = make_config(tmp_path)
+    # NAS root exists but no AV* dirs
+    res = check_nas_mount(cfg)
+    assert res["ok"] is False
+    assert res["status"] == "empty"
+
+
+def test_check_nas_mount_empty_sequencer_without_runs(tmp_path):
+    cfg = make_config(tmp_path)
+    (tmp_path / "AV224503").mkdir()
+    res = check_nas_mount(cfg)
+    assert res["ok"] is False
+    assert res["status"] == "empty"
+    assert res["sequencer_count"] == 1
+
+
+def test_check_nas_mount_ok(tmp_path):
+    cfg = make_config(tmp_path)
+    seq = tmp_path / "AV224503"
+    seq.mkdir()
+    make_run(seq, "20260522_AV224503_5279_1", {"R1": 1})
+    res = check_nas_mount(cfg)
+    assert res["ok"] is True
+    assert res["status"] == "ok"
+    assert res["sequencer_count"] == 1
+    assert res["sample_run_count"] >= 1
 
 
 def test_resolve_tile_spec_default(tmp_path):

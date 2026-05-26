@@ -39,6 +39,17 @@
         </div>
     </nav>
 
+    {% if nas_check and not nas_check.ok %}
+    <div class="alert alert-{{ 'danger' if nas_check.status == 'missing' else 'warning' }} mb-0 rounded-0"
+         role="alert" id="nas-banner">
+        <strong>⚠ NAS share looks {{ nas_check.status }}:</strong>
+        <span class="small">{{ nas_check.message }}</span>
+        <span class="small text-muted ms-2">
+            Run discovery and validation will fail until the mount is restored.
+        </span>
+    </div>
+    {% endif %}
+
     <main class="container-fluid mt-4">
         {% block content %}{% endblock %}
     </main>

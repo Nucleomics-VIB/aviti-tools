@@ -10,6 +10,7 @@ Author: Stephane Plaisance <stephane.plaisance@vib.be>
 """
 from __future__ import annotations
 
+import os
 from dataclasses import asdict
 from pathlib import Path
 
@@ -17,9 +18,10 @@ from flask import Flask, abort, flash, jsonify, redirect, render_template, reque
 
 from config_loader import env_config_path, load
 from db import JobsDAO, RunsMetadataDAO
+from job_worker import JobWorker
 from discovery import (
-    is_test_run, iter_validated, read_run_metadata, read_run_start,
-    resolve_tile_spec, scan_nas_for_runs, validate_run,
+    check_nas_mount, is_test_run, iter_validated, read_run_metadata,
+    read_run_start, resolve_tile_spec, scan_nas_for_runs, validate_run,
 )
 from masks_loader import load_builtin_masks
 from users_loader import load_users
@@ -35,6 +37,15 @@ def create_app() -> Flask:
     app.config["DAO"] = JobsDAO(cfg.db_path)
     app.config["RUNS_DAO"] = RunsMetadataDAO(cfg.db_path)
 
+    # The background worker is single-instance per process; Flask's
+    # debug auto-reloader would spawn a duplicate, hence the env flag
+    # guard (WERKZEUG_RUN_MAIN is set in the reloader child only).
+    if os.environ.get("AVITI_DISABLE_WORKER") != "1":
+        if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+            worker = JobWorker(cfg, app.config["DAO"])
+            worker.start()
+            app.config["WORKER"] = worker
+
     @app.context_processor
     def inject_globals() -> dict:
         return {
@@ -43,6 +54,7 @@ def create_app() -> Flask:
             "release_date": cfg.release_date,
             "org_name": cfg.org_name,
             "support_email": cfg.support_email,
+            "nas_check": check_nas_mount(cfg),
         }
 
     @app.get("/")
@@ -390,14 +402,14 @@ def create_app() -> Flask:
 
     @app.get("/api/v1/health")
     def health():
-        nas_ok = cfg.nas_root.exists() and cfg.nas_root.is_dir()
+        check = check_nas_mount(cfg)
         return jsonify({
-            "status": "ok",
+            "status": "ok" if check["ok"] else "degraded",
             "app_name": cfg.app_name,
             "app_version": cfg.app_version,
             "release_date": cfg.release_date,
             "nas_root": str(cfg.nas_root),
-            "nas_mounted": nas_ok,
+            "nas_check": check,
             "db_path": str(cfg.db_path),
         })
 
@@ -573,7 +585,6 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    import os
     cfg = app.config["WEBUI_CONFIG"]
     debug = os.environ.get("AVITI_WEBUI_DEBUG") == "1"
     app.run(host=cfg.host, port=cfg.port, debug=debug)

@@ -6,12 +6,14 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 -i RUN_DIR -o OUTPUT_DIR [-p THREADS] [-j JOBS] [-m MASKS_FILE] [-c CONFIG] [--cache-input]"
-  echo "  -p THREADS:     bases2fastq worker threads per container (default: 8)"
-  echo "  -j JOBS:        max concurrent mask runs (default: 4)"
-  echo "  -m MASKS_FILE:  YAML file with mask list (default: built-in array)"
-  echo "  -c CONFIG:      YAML config file (default: config.yaml next to this script)"
-  echo "  --cache-input:  copy input to local fast storage before running (recommended on NAS)"
+  echo "Usage: $0 -i RUN_DIR -o OUTPUT_DIR [-p THREADS] [-j JOBS] [-m MASKS_FILE] [-c CONFIG] [--cache-input] [--include-tile PATTERN] [--job-id ID]"
+  echo "  -p THREADS:        bases2fastq worker threads per container (default: 8)"
+  echo "  -j JOBS:           max concurrent mask runs (default: 4)"
+  echo "  -m MASKS_FILE:     YAML file with mask list (default: built-in array)"
+  echo "  -c CONFIG:         YAML config file (default: config.yaml next to this script)"
+  echo "  --cache-input:     copy input to local fast storage before running (recommended on NAS)"
+  echo "  --include-tile P:  passthrough to bases2fastq --include-tile (e.g. L1R..C..S. or L1R02C01S1|L1R05C01S1)"
+  echo "  --job-id ID:       tag every spawned docker container with --label aviti_job_id=ID (for cancel/cleanup)"
 }
 
 INPUT_DIR=""
@@ -24,6 +26,8 @@ DOCKER_IMAGE="elembio/bases2fastq:latest"
 CACHE_DIR=""
 _SEMFIFO=""
 MASKS_FILE=""
+INCLUDE_TILE=""
+JOB_ID=""
 CONFIG_FILE="$(dirname "$0")/config.yaml"
 
 # Pre-scan argv for -c/--config so the correct file is loaded before full parsing
@@ -110,6 +114,21 @@ while [[ $# -gt 0 ]]; do
     -m|--masks-file)
       [[ $# -lt 2 ]] && { usage; exit 1; }
       MASKS_FILE="$2"
+      shift 2
+      ;;
+    --include-tile)
+      [[ $# -lt 2 ]] && { usage; exit 1; }
+      INCLUDE_TILE="$2"
+      shift 2
+      ;;
+    --job-id)
+      [[ $# -lt 2 ]] && { usage; exit 1; }
+      JOB_ID="$2"
+      shift 2
+      ;;
+    --mem-limit)
+      [[ $# -lt 2 ]] && { usage; exit 1; }
+      MEM_LIMIT="$2"
       shift 2
       ;;
     -h|--help)
@@ -353,19 +372,29 @@ run_mask_qc() {
   local outdir="$2"
   local logfile="$outdir/run.log"
   local mem_args=()
+  local label_args=()
+  local b2f_extra_args=()
   # --memory-swap equal to --memory disables swap, capping hard at MEM_LIMIT (OOM prevention)
   [[ -n "$MEM_LIMIT" ]] && mem_args=(--memory "$MEM_LIMIT" --memory-swap "$MEM_LIMIT")
+  # --job-id labels every container so the orchestrator can cancel via:
+  #   docker ps --filter label=aviti_job_id=<id> -q | xargs docker stop
+  [[ -n "$JOB_ID" ]] && label_args=(--label "aviti_job_id=$JOB_ID")
+  # --include-tile passes through to bases2fastq (a regex pattern or
+  # pipe-joined tile-ID list, resolved by the web UI's tile selector).
+  [[ -n "$INCLUDE_TILE" ]] && b2f_extra_args+=(--include-tile "$INCLUDE_TILE")
 
   docker run --rm \
     "${DOCKER_USER_ARGS[@]}" \
     "${DOCKER_INPUT_ARGS[@]}" \
     "${mem_args[@]}" \
+    "${label_args[@]}" \
     -v "$outdir:/output" \
     --platform linux/amd64 \
     "$DOCKER_IMAGE" \
     bases2fastq /input /output \
     --qc-only \
     --filter-mask "$mask" \
+    "${b2f_extra_args[@]}" \
     -p "$THREADS" 2>&1 | tee "$logfile"
 }
 
