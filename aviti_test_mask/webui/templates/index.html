@@ -19,7 +19,13 @@
     <div class="card mb-3">
       <div class="card-header d-flex justify-content-between align-items-center">
         <span>🧬 Recent AVITI runs</span>
-        <small class="text-muted" id="runs-total"></small>
+        <div class="d-flex align-items-center gap-2">
+          <small class="text-muted" id="runs-updated"></small>
+          <button id="runs-refresh" type="button"
+                  class="btn btn-sm btn-outline-secondary py-0"
+                  title="Re-fetch from NAS (drops cached pages)">↻ Refresh</button>
+          <small class="text-muted" id="runs-total"></small>
+        </div>
       </div>
       <div class="card-body p-0">
         <table class="table table-sm table-hover mb-0">
@@ -27,6 +33,7 @@
             <tr>
               <th>Sequencer</th>
               <th>Run ID</th>
+              <th>Status</th>
               <th class="text-end">Run start</th>
               <th></th>
             </tr>
@@ -41,6 +48,24 @@
         <span id="runs-page" class="text-muted small"></span>
         <button id="runs-next" class="btn btn-sm btn-outline-secondary" disabled>Next →</button>
       </div>
+    </div>
+
+    <!-- Status pill legend -->
+    <div class="small text-muted mb-3" id="status-legend">
+      <strong>Status legend:</strong>
+      <span class="badge bg-success ms-2">✓ Completed</span>
+      <span class="badge bg-danger ms-1">✗ Failed</span>
+      <span class="badge bg-light text-dark border ms-1">? Unknown</span>
+      <span class="text-muted ms-1">— instrument outcome (RunUploaded.json)</span>
+      <span class="badge bg-warning text-dark ms-3">TEST</span>
+      <span class="text-muted ms-1">— folder name has no 4-digit project token</span>
+      <br>
+      <span class="badge bg-success ms-2">≥85 %PF</span>
+      <span class="badge bg-warning text-dark ms-1">75–85 %PF</span>
+      <span class="badge bg-danger ms-1">&lt;75 %PF</span>
+      <span class="text-muted ms-1">— passing-filter polonies (RunStats.PercentPF)</span>
+      <span class="badge bg-secondary ms-3">incomplete</span>
+      <span class="text-muted ms-1">— BaseCalls validation failed (mid-copy or missing zips)</span>
     </div>
   </div>
 
@@ -113,11 +138,55 @@
   function emptyRow(message, isError) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 4;
+    td.colSpan = 5;
     td.className = 'text-center py-3 ' + (isError ? 'text-danger' : 'text-muted');
     td.textContent = message;
     tr.appendChild(td);
     return tr;
+  }
+
+  function pill(text, cls, title) {
+    const span = document.createElement('span');
+    span.className = 'badge ' + cls;
+    span.textContent = text;
+    if (title) span.title = title;
+    return span;
+  }
+
+  function statusCell(r) {
+    const td = document.createElement('td');
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex flex-wrap gap-1';
+
+    // Outcome
+    if (r.outcome === 'OutcomeCompleted') {
+      wrap.appendChild(pill('✓ Completed', 'bg-success', 'RunUploaded.outcome'));
+    } else if (r.outcome === 'OutcomeFailed') {
+      wrap.appendChild(pill('✗ Failed', 'bg-danger', 'RunUploaded.outcome'));
+    } else {
+      wrap.appendChild(pill('? Unknown', 'bg-light text-dark border', 'no RunUploaded.outcome'));
+    }
+
+    // Test runs (non-4-digit project token in folder name)
+    if (r.is_test) {
+      wrap.appendChild(pill('TEST', 'bg-warning text-dark', 'folder name has no 4-digit project'));
+    }
+
+    // %PF colour-coded
+    if (r.percent_pf != null) {
+      const pf = r.percent_pf;
+      const cls = pf >= 85 ? 'bg-success' : pf >= 75 ? 'bg-warning text-dark' : 'bg-danger';
+      wrap.appendChild(pill(pf.toFixed(1) + ' %PF', cls, 'AvitiRunStats.RunStats.PercentPF'));
+    }
+
+    // Validation
+    if (r.valid === false) {
+      wrap.appendChild(pill('incomplete', 'bg-secondary',
+        r.first_failure ? ('fails check: ' + r.first_failure) : 'validation failed'));
+    }
+
+    td.appendChild(wrap);
+    return td;
   }
 
   function render(payload) {
@@ -142,6 +211,8 @@
         code.textContent = r.run_id;
         tdRun.appendChild(code);
         tr.appendChild(tdRun);
+        // Status badges
+        tr.appendChild(statusCell(r));
         // Run start (from RunParameters.Date when available, else folder mtime)
         const tdM = document.createElement('td');
         tdM.className = 'text-end text-muted';
@@ -173,6 +244,8 @@
       `Page ${pagination.page} of ${pagination.last_page}`;
     document.getElementById('runs-prev').disabled = !pagination.has_prev;
     document.getElementById('runs-next').disabled = !pagination.has_next;
+    document.getElementById('runs-updated').textContent =
+      'updated ' + new Date().toLocaleTimeString();
     currentPage = pagination.page;
     lastPage = pagination.last_page;
   }
@@ -206,6 +279,11 @@
 
   document.getElementById('runs-prev').addEventListener('click', () => show(currentPage - 1));
   document.getElementById('runs-next').addEventListener('click', () => show(currentPage + 1));
+  document.getElementById('runs-refresh').addEventListener('click', () => {
+    cache.clear();
+    detailCache.clear();
+    show(currentPage);
+  });
 
   // ── Run metadata modal ────────────────────────────────────────────
   const detailCache = new Map();

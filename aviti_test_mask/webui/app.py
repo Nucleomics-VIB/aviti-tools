@@ -18,7 +18,8 @@ from flask import Flask, jsonify, render_template, request
 from config_loader import env_config_path, load
 from db import JobsDAO, RunsMetadataDAO
 from discovery import (
-    iter_validated, read_run_metadata, read_run_start, scan_nas_for_runs,
+    is_test_run, iter_validated, read_run_metadata, read_run_start,
+    scan_nas_for_runs, validate_run,
 )
 from masks_loader import load_builtin_masks
 from users_loader import load_users
@@ -128,14 +129,27 @@ def create_app() -> Flask:
         # Cheap when the row already exists (one indexed SELECT + UPDATE).
         runs_dao: RunsMetadataDAO = app.config["RUNS_DAO"]
         for row in pag["items"]:
-            meta = read_run_metadata(Path(row["path"]))
+            p = Path(row["path"])
+            meta = read_run_metadata(p)
+            row["is_test"] = is_test_run(row["run_id"])
             if meta:
                 runs_dao.upsert(meta["run_internal_id"], meta["fields"])
                 row["run_internal_id"] = meta["run_internal_id"]
                 row["run_start"] = meta["fields"].get("run_start")
+                row["outcome"] = meta["fields"].get("outcome")
+                row["percent_pf"] = meta["fields"].get("percent_pf")
             else:
                 row["run_internal_id"] = None
-                row["run_start"] = read_run_start(Path(row["path"]))
+                row["run_start"] = read_run_start(p)
+                row["outcome"] = None
+                row["percent_pf"] = None
+            # Validation is the heaviest check per row (BaseCalls listdir +
+            # stat per zip); cap it here so we only walk once per page.
+            v = validate_run(p, cfg)
+            row["valid"] = v["valid"]
+            row["first_failure"] = (
+                v["first_failure"]["name"] if v["first_failure"] else None
+            )
         return jsonify({
             "runs": pag["items"],
             "pagination": {k: v for k, v in pag.items() if k != "items"},
@@ -148,6 +162,19 @@ def create_app() -> Flask:
         row = runs_dao.get(run_internal_id)
         if row is None:
             return jsonify({"error": "unknown run"}), 404
+        # Re-read from disk so an in-progress run that has since
+        # finished doesn't serve a stale "incomplete" snapshot. Cheap
+        # when the row already exists; on disk error we fall back to
+        # the cached row.
+        try:
+            disk_path = Path(row["run_path"])
+            if disk_path.exists():
+                meta = read_run_metadata(disk_path)
+                if meta and meta["run_internal_id"] == run_internal_id:
+                    runs_dao.upsert(run_internal_id, meta["fields"])
+                    row = runs_dao.get(run_internal_id) or row
+        except OSError:
+            pass
         return jsonify(row)
 
     @app.get("/api/v1/runs/validated")
