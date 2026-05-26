@@ -289,9 +289,10 @@ class JobWorker:
         )
 
         # Start a new process group so we can SIGTERM the whole tree on cancel.
+        spawn_env = {**os.environ, "CONDA_ENV_NAME": self.cfg.conda_env_name}
         proc = subprocess.Popen(
             cmd, stdout=log_fh, stderr=subprocess.STDOUT,
-            start_new_session=True, close_fds=True,
+            start_new_session=True, close_fds=True, env=spawn_env,
         )
 
         self.dao.update(job_id, state="running",

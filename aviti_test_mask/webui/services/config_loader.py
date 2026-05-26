@@ -50,6 +50,7 @@ class WebUIConfig:
     users_file: Path
     masks_file: Path
     scripts_dir: Path
+    conda_env_name: str
 
     raw: dict = field(default_factory=dict)
 
@@ -108,6 +109,9 @@ def load(path: str | Path) -> WebUIConfig:
         # Default scripts_dir: project-root scripts/ relative to the YAML.
         # Production YAMLs override this with an absolute /app/scripts.
         scripts_dir=_resolve(base, raw.get("scripts_dir", "../../scripts")),
+        # Conda env the bash scripts try to activate. Mac dev typically
+        # has 'aviti_test_mask_webui'; Ubuntu prod has 'pythonenv'.
+        conda_env_name=str(raw.get("conda_env_name", "pythonenv")),
         raw=raw,
     )
 

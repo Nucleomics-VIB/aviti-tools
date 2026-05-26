@@ -36,7 +36,10 @@ done
 # Activate conda env if available (mirrors main script behaviour)
 if command -v conda >/dev/null 2>&1; then
   eval "$(conda shell.bash hook)"
-  conda activate pythonenv || true
+  CONDA_ENV_NAME="${CONDA_ENV_NAME:-pythonenv}"
+  if conda env list | awk '{print $1}' | grep -qx "$CONDA_ENV_NAME"; then
+    conda activate "$CONDA_ENV_NAME"
+  fi
 fi
 
 command -v python3 >/dev/null 2>&1 || { echo "python3 not found — activate your environment and retry"; exit 1; }

@@ -52,3 +52,8 @@ purge_on_each_request: true
 users_file: users.yaml
 masks_file: ../../scripts/masks.yaml       # reuse the bash script's mask list
 scripts_dir: ../../scripts                 # where aviti_test_mask.sh lives
+
+# Conda env the bash scripts try to activate after spawning. The worker
+# exports CONDA_ENV_NAME=<this> when launching the script. Mac dev
+# typically: 'aviti_test_mask_webui'. Ubuntu prod: 'pythonenv'.
+conda_env_name: aviti_test_mask_webui

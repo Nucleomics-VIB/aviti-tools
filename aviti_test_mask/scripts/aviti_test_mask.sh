@@ -313,7 +313,12 @@ DOCKER_USER_ARGS=(--user "${HOST_UID}:${HOST_GID}")
 
 if command -v conda >/dev/null 2>&1; then
   eval "$(conda shell.bash hook)"
-  conda activate pythonenv || true
+  CONDA_ENV_NAME="${CONDA_ENV_NAME:-pythonenv}"
+  if conda env list | awk '{print $1}' | grep -qx "$CONDA_ENV_NAME"; then
+    conda activate "$CONDA_ENV_NAME"
+  else
+    echo "ℹ  conda env '$CONDA_ENV_NAME' not found, staying in '${CONDA_DEFAULT_ENV:-base}'"
+  fi
 fi
 
 [[ -d "$INPUT_DIR" ]] || { echo "Input run directory not found: $INPUT_DIR"; exit 1; }
