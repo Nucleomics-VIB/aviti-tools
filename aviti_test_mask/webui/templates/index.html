@@ -51,22 +51,41 @@
     </div>
 
     <!-- Status pill legend -->
-    <div class="small text-muted mb-3" id="status-legend">
-      <strong>Status legend:</strong>
-      <span class="badge bg-success ms-2">✓ Completed</span>
-      <span class="badge bg-danger ms-1">✗ Failed</span>
-      <span class="badge bg-light text-dark border ms-1">? Unknown</span>
-      <span class="text-muted ms-1">— instrument outcome (RunUploaded.json)</span>
-      <span class="badge bg-warning text-dark ms-3">TEST</span>
-      <span class="text-muted ms-1">— folder name has no 4-digit project token</span>
-      <br>
-      <span class="badge bg-success ms-2">≥85 %PF</span>
-      <span class="badge bg-warning text-dark ms-1">75–85 %PF</span>
-      <span class="badge bg-danger ms-1">&lt;75 %PF</span>
-      <span class="text-muted ms-1">— passing-filter polonies (RunStats.PercentPF)</span>
-      <span class="badge bg-secondary ms-3">incomplete</span>
-      <span class="text-muted ms-1">— BaseCalls validation failed (mid-copy or missing zips)</span>
-    </div>
+    <details class="mb-3" id="status-legend">
+      <summary class="small text-muted" style="cursor: pointer;">Status pill legend</summary>
+      <table class="table table-sm table-borderless small mb-0 mt-2">
+        <tbody>
+          <tr>
+            <td class="text-end pe-3" style="width: 35%; white-space: nowrap;">
+              <span class="badge bg-success">✓ Completed</span>
+              <span class="badge bg-danger">✗ Failed</span>
+              <span class="badge bg-light text-dark border">? Unknown</span>
+            </td>
+            <td class="text-muted">Instrument-reported outcome (<code>RunUploaded.json</code>)</td>
+          </tr>
+          <tr>
+            <td class="text-end pe-3" style="white-space: nowrap;">
+              <span class="badge bg-warning text-dark">TEST</span>
+            </td>
+            <td class="text-muted">Folder name lacks a 4-digit project token (test or maintenance run)</td>
+          </tr>
+          <tr>
+            <td class="text-end pe-3" style="white-space: nowrap;">
+              <span class="badge bg-success">≥85</span>
+              <span class="badge bg-warning text-dark">75–85</span>
+              <span class="badge bg-danger">&lt;75</span>
+            </td>
+            <td class="text-muted">Run-level %PF — passing-filter polonies (<code>RunStats.PercentPF</code>)</td>
+          </tr>
+          <tr>
+            <td class="text-end pe-3" style="white-space: nowrap;">
+              <span class="badge bg-secondary">incomplete</span>
+            </td>
+            <td class="text-muted">Validation failed — mid-copy, missing zips, or empty files</td>
+          </tr>
+        </tbody>
+      </table>
+    </details>
   </div>
 
   <div class="col-md-4">
