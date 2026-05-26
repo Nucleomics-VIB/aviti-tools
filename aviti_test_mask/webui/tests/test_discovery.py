@@ -197,7 +197,9 @@ def test_resolve_tile_spec_default_single_lane(tmp_path):
     assert out["spec"] == "default"
     # Predicted picks: first tile of each lane (sorted).
     assert out["tiles"] == ["L1R01C01S1"]
-    assert out["pattern"] == "L1R01C01S1"
+    # Anchored — bases2fastq's --include-tile is regex; without ^…$
+    # 'L1R09C01S1' matched neighbour columns C02 / C03 as substrings.
+    assert out["pattern"] == "^L1R01C01S1$"
     assert out["count"] == 1
 
 
@@ -206,16 +208,15 @@ def test_resolve_tile_spec_default_multi_lane(tmp_path):
                             "L1R01C01S1", "L2R02C01S1"])
     out = resolve_tile_spec(tmp_path, "default")
     assert out["tiles"] == ["L1R01C01S1", "L2R01C01S1"]
-    assert out["pattern"] == "L1R01C01S1|L2R01C01S1"
+    assert out["pattern"] == "^L1R01C01S1$|^L2R01C01S1$"
 
 
 def test_resolve_tile_spec_default_lane_filtered(tmp_path):
     _write_tiles(tmp_path, ["L1R02C01S1", "L2R01C01S1",
                             "L1R01C01S1", "L2R02C01S1"])
     out = resolve_tile_spec(tmp_path, "default", lanes="1")
-    # Lane 1 only — single tile, single-tile pattern.
     assert out["tiles"] == ["L1R01C01S1"]
-    assert out["pattern"] == "L1R01C01S1"
+    assert out["pattern"] == "^L1R01C01S1$"
 
 
 def test_resolve_tile_spec_default_no_manifest_falls_back(tmp_path):
@@ -227,7 +228,7 @@ def test_resolve_tile_spec_default_no_manifest_falls_back(tmp_path):
 def test_resolve_tile_spec_all(tmp_path):
     _write_tiles(tmp_path, ["L1R01C01S1", "L2R03C04S1"])
     out = resolve_tile_spec(tmp_path, "all")
-    assert out["pattern"] == "L.R..C..S."
+    assert out["pattern"] == "^L.R..C..S.$"
     assert out["spec"] == "all"
     # Full tile inventory now travels with the row for UI display.
     assert sorted(out["tiles"]) == ["L1R01C01S1", "L2R03C04S1"]
@@ -237,7 +238,7 @@ def test_resolve_tile_spec_all(tmp_path):
 def test_resolve_tile_spec_lane(tmp_path):
     _write_tiles(tmp_path, ["L1R01C01S1"])
     out = resolve_tile_spec(tmp_path, "lane", tiles_lane=2)
-    assert out["pattern"] == "L2R..C..S."
+    assert out["pattern"] == "^L2R..C..S.$"
     assert out["spec"] == "lane:2"
 
 
@@ -257,7 +258,7 @@ def test_resolve_tile_spec_random_size_and_pattern(tmp_path):
     _write_tiles(tmp_path, tiles)
     out = resolve_tile_spec(tmp_path, "random", tiles_n=4)
     assert len(out["tiles"]) == 4
-    assert out["pattern"] == "|".join(out["tiles"])
+    assert out["pattern"] == "|".join(f"^{t}$" for t in out["tiles"])
     assert all(t in tiles for t in out["tiles"])
 
 

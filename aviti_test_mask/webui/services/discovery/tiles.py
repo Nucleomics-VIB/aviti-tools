@@ -62,13 +62,20 @@ def resolve_tile_spec(
             return items
         return [t for t in items if t and t[0] == "L" and t[1] in lane_filter]
 
+    # Each picked tile becomes ^TILE$ so bases2fastq's --include-tile
+    # (regex-based) matches only the exact tile name. Without anchors,
+    # 'L1R09C01S1' was matching L1R09C02 / C03 as well, breaking the
+    # single-tile fast path.
+    def _anchored(tiles: list[str]) -> str:
+        return "|".join(f"^{t}$" for t in tiles)
+
     if tiles_mode == "default":
         # bases2fastq with --qc-only and no --include-tile processes the
         # first tile of each lane present. We pick those tiles here AND
-        # pass them concretely via --include-tile so the lane filter
-        # actually takes effect (bases2fastq otherwise ignores our form
-        # lane selection and walks both lanes). Falls back to no flag
-        # only when the manifest tile list is absent.
+        # pass them concretely via an anchored --include-tile so the
+        # lane filter actually takes effect AND we don't get neighbour
+        # columns / surfaces matching by accident. Falls back to no
+        # flag only when the manifest tile list is absent.
         all_tiles = filter_by_lane(_read_tiles_list(run_path))
         if not all_tiles:
             return {"spec": "default", "pattern": None, "tiles": [], "count": 0}
@@ -80,23 +87,27 @@ def resolve_tile_spec(
                     by_lane[lane] = t
         picked = [by_lane[k] for k in sorted(by_lane)]
         return {"spec": "default",
-                "pattern": "|".join(picked) if picked else None,
+                "pattern": _anchored(picked) if picked else None,
                 "tiles": picked, "count": len(picked)}
 
     if tiles_mode == "all":
         all_tiles = filter_by_lane(_read_tiles_list(run_path))
-        return {"spec": "all", "pattern": "L.R..C..S.",
+        # "all" pattern is regex with wildcards — anchor it too so it
+        # only matches strings that are exactly a tile ID.
+        return {"spec": "all", "pattern": "^L.R..C..S.$",
                 "tiles": all_tiles, "count": len(all_tiles)}
 
     if tiles_mode == "lane":
         lane = int(tiles_lane or 1)
-        return {"spec": f"lane:{lane}", "pattern": f"L{lane}R..C..S.",
+        return {"spec": f"lane:{lane}",
+                "pattern": f"^L{lane}R..C..S.$",
                 "tiles": [], "count": -1}
 
     if tiles_mode == "raw":
         raw = (tiles_raw or "").strip()
         if not raw:
             raise ValueError("raw tile pattern is empty")
+        # Raw mode is the operator's escape hatch — don't touch it.
         return {"spec": "raw", "pattern": raw, "tiles": [], "count": -1}
 
     if tiles_mode in ("spread", "random"):
@@ -112,7 +123,7 @@ def resolve_tile_spec(
             picked = _r.sample(all_tiles, n)
         return {
             "spec": f"{tiles_mode}:{len(picked)}",
-            "pattern": "|".join(picked),
+            "pattern": _anchored(picked),
             "tiles": picked,
             "count": len(picked),
         }
