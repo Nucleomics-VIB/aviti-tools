@@ -126,7 +126,10 @@
       const code = document.createElement('code'); code.textContent = r.run_id;
       tdRun.appendChild(code); tr.appendChild(tdRun);
       tr.appendChild(cell(r.mask_count + ' (' + r.masks_source + ')'));
-      tr.appendChild(cell(r.tiles_spec));
+      // Empty tiles_spec means the bases2fastq default — single tile, no
+      // --include-tile flag. Render that explicitly so the column is
+      // never visually empty.
+      tr.appendChild(cell(r.tiles_spec || 'single tile (default)'));
       tr.appendChild(cell(r.cache_input ? 'yes' : 'no'));
       // State pill
       const tdState = document.createElement('td');
