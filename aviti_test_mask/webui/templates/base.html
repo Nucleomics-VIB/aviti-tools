@@ -43,7 +43,16 @@
         {% block content %}{% endblock %}
     </main>
 
-    <footer class="text-center text-muted small py-3 mt-4">
+    <footer class="text-center text-muted small py-3 mt-4 border-top">
+        <div class="mb-1">
+            <span class="text-uppercase me-2" style="letter-spacing: 0.5px;">API</span>
+            <a href="/api/v1/health" class="text-decoration-none">health</a> ·
+            <a href="/api/v1/runs?page=1&amp;per_page=10" class="text-decoration-none">runs</a> ·
+            <a href="/api/v1/runs/validated?page=1&amp;per_page=10" class="text-decoration-none">runs/validated</a> ·
+            <a href="/api/v1/masks" class="text-decoration-none">masks</a> ·
+            <a href="/api/v1/users" class="text-decoration-none">users</a> ·
+            <a href="/api/v1/config" class="text-decoration-none">config</a>
+        </div>
         © {{ org_name }} · <a href="mailto:{{ support_email }}">{{ support_email }}</a>
     </footer>
 
