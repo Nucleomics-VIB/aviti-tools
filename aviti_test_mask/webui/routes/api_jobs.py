@@ -220,3 +220,28 @@ def clear_queue():
                    finished_at=now,
                    error_message="cleared via /queue")
     return jsonify({"deleted": len(rows)})
+
+
+@bp.post("/jobs/<job_id>/dismiss")
+def dismiss_job(job_id: str):
+    dao = _dao()
+    row = dao.get(job_id)
+    if row is None:
+        return jsonify({"error": "unknown job"}), 404
+    if row["state"] not in ("done", "failed", "cancelled"):
+        return jsonify(
+            {"error": f"can only dismiss terminal jobs (state={row['state']})"}), 409
+    dao.soft_delete(job_id)
+    return jsonify({"ok": True})
+
+
+@bp.post("/failures/clear")
+def clear_failures():
+    dao = _dao()
+    since = (datetime.utcnow() - timedelta(hours=24)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
+    rows, _ = dao.list(states=["failed", "cancelled"],
+                        since=since, limit=10000)
+    for r in rows:
+        dao.soft_delete(r["job_id"])
+    return jsonify({"deleted": len(rows)})

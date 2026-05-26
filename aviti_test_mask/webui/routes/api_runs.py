@@ -17,9 +17,31 @@ from services.discovery import (
 
 bp = Blueprint("api_runs", __name__, url_prefix="/api/v1/runs")
 
+_VALIDATION_CACHE: dict[tuple[str, float], dict] = {}
+_METADATA_CACHE: dict[tuple[str, float], dict | None] = {}
+
 
 def _cfg():
     return current_app.config["WEBUI_CONFIG"]
+
+
+def _cached_validate(path: Path, mtime: float, cfg) -> dict:
+    key = (str(path), mtime)
+    cached = _VALIDATION_CACHE.get(key)
+    if cached is not None:
+        return cached
+    out = validate_run(path, cfg)
+    _VALIDATION_CACHE[key] = out
+    return out
+
+
+def _cached_metadata(path: Path, mtime: float) -> dict | None:
+    key = (str(path), mtime)
+    if key in _METADATA_CACHE:
+        return _METADATA_CACHE[key]
+    out = read_run_metadata(path)
+    _METADATA_CACHE[key] = out
+    return out
 
 
 def _paginate(items: list, page: int, per_page: int) -> dict:
@@ -70,7 +92,8 @@ def get_runs():
     runs_dao: RunsMetadataDAO = current_app.config["RUNS_DAO"]
     for row in pag["items"]:
         p = Path(row["path"])
-        meta = read_run_metadata(p)
+        mtime = row["mtime"]
+        meta = _cached_metadata(p, mtime)
         row["is_test"] = is_test_run(row["run_id"])
         if meta:
             runs_dao.upsert(meta["run_internal_id"], meta["fields"])
@@ -93,7 +116,7 @@ def get_runs():
                       "operator_name", "throughput", "kit_config",
                       "chemistry_version", "analysis_lanes", "total_yield"):
                 row[k] = None
-        v = validate_run(p, cfg)
+        v = _cached_validate(p, mtime, cfg)
         row["valid"] = v["valid"]
         row["first_failure"] = (
             v["first_failure"]["name"] if v["first_failure"] else None
@@ -127,7 +150,7 @@ def get_runs_validated():
     valid, invalid = [], []
     for entry in pag["items"]:
         cand = entry.pop("_candidate")
-        result = validate_run(cand.path, cfg)
+        result = _cached_validate(cand.path, cand.mtime, cfg)
         entry["run_start"] = read_run_start(cand.path)
         entry["meta"] = result["meta"]
         entry["first_failure"] = (

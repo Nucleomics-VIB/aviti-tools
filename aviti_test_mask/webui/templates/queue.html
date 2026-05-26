@@ -49,9 +49,14 @@
 
 <!-- Recent failures section -->
 <div class="mt-4" id="failures-section" style="display: none;">
-  <h2 class="h6 mb-2">
-    <span class="text-danger">⚠</span> Recent failures (last 24 h)
-  </h2>
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <h2 class="h6 mb-0">
+      <span class="text-danger">⚠</span> Recent failures (last 24 h)
+    </h2>
+    <button id="failures-clear-btn" type="button" class="btn btn-sm btn-outline-danger py-0">
+      Clear all failures
+    </button>
+  </div>
   <div class="card">
     <div class="card-body p-0">
       <div class="table-responsive">
@@ -211,15 +216,27 @@
       tdErr.textContent = r.error_message || '—';
       tdErr.title = r.error_message || '';
       tr.appendChild(tdErr);
-      // View log button
+      // Action buttons: View log + Dismiss (×)
       const tdAct = document.createElement('td');
-      tdAct.className = 'text-end';
+      tdAct.className = 'text-end text-nowrap';
+      const grp = document.createElement('div');
+      grp.className = 'btn-group';
       const view = document.createElement('button');
       view.type = 'button';
       view.className = 'btn btn-sm btn-outline-secondary py-0';
       view.textContent = 'View log';
       view.addEventListener('click', () => openLogModal(r.job_id));
-      tdAct.appendChild(view);
+      grp.appendChild(view);
+      const dismiss = document.createElement('button');
+      dismiss.type = 'button';
+      dismiss.className = 'btn btn-sm btn-outline-danger py-0';
+      dismiss.textContent = '×';
+      dismiss.title = 'Dismiss this failure (soft delete)';
+      dismiss.addEventListener('click', async () => {
+        if (await postAction('/api/v1/jobs/' + encodeURIComponent(r.job_id) + '/dismiss')) reload();
+      });
+      grp.appendChild(dismiss);
+      tdAct.appendChild(grp);
       tr.appendChild(tdAct);
       tbody.appendChild(tr);
     }
@@ -426,6 +443,17 @@
     }
   }
   document.getElementById('queue-refresh').addEventListener('click', reload);
+
+  document.getElementById('failures-clear-btn').addEventListener('click', async () => {
+    if (!confirm('Dismiss all recent failures? This soft-deletes them from the list.')) return;
+    const r = await fetch('/api/v1/failures/clear', { method: 'POST' });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      alert('Error: ' + (e.error || r.status));
+      return;
+    }
+    await reload();
+  });
 
   // ── Clear queue modal ─────────────────────────────────────────────
   const modalEl = document.getElementById('clearModal');
