@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Results — {{ app_name }}{% endblock %}
 
+{#
+  Per-job results page. Renders the ranked mask_results from the DB,
+  a Chart.js comparison strip, and one expandable card per mask that
+  pulls RunStats.json, the bases2fastq HTML report and a file listing
+  on demand. All bases2fastq output is served read-only via
+  /results/<job_id>/files/<safe_mask>/<path>.
+#}
+
 {% block content %}
 <div class="d-flex justify-content-between align-items-start mb-3">
   <div>
@@ -48,10 +56,27 @@
   </div>
 </div>
 
-<div class="card">
+<!-- Comparison strip -->
+<div class="card mb-3">
   <div class="card-header py-2 d-flex justify-content-between align-items-center">
-    <span class="small">Per-mask metrics — sorted by score (higher = better)</span>
+    <span class="small">Mask comparison — %Assigned, Q30%, Score</span>
     <span class="small text-muted">Score = %Assigned × Q30% / 100</span>
+  </div>
+  <div class="card-body">
+    <div id="chart-empty" class="text-muted small text-center py-3 d-none">
+      No data yet.
+    </div>
+    <canvas id="cmp-chart" height="110"></canvas>
+  </div>
+</div>
+
+<!-- Per-mask cards -->
+<div id="mask-cards"></div>
+
+<!-- Ranked table (kept for quick scanning) -->
+<div class="card mt-3">
+  <div class="card-header py-2">
+    <span class="small">Per-mask metrics — sorted by score (higher = better)</span>
   </div>
   <div class="card-body p-0">
     <div class="table-responsive">
@@ -61,7 +86,7 @@
             <th>Rank</th>
             <th>Mask</th>
             <th>Lane</th>
-            <th class="text-end" title="Reads assigned percentage">%Assigned</th>
+            <th class="text-end">%Assigned</th>
             <th class="text-end">Q30%</th>
             <th class="text-end">Score</th>
             <th>Source</th>
@@ -75,7 +100,7 @@
   </div>
 </div>
 
-<!-- Log modal -->
+<!-- Log modal (also used for Bases2Fastq.log + file listings) -->
 <div class="modal fade" id="logModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content">
@@ -93,9 +118,43 @@
     </div>
   </div>
 </div>
+
+<!-- Report iframe modal -->
+<div class="modal fade" id="reportModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-lg-down modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h5 class="modal-title small">bases2fastq report</h5>
+        <a id="reportNewTab" class="btn btn-sm btn-outline-secondary py-0 ms-2"
+           href="#" target="_blank" rel="noopener">Open in new tab ↗</a>
+        <button type="button" class="btn-close ms-auto"
+                data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body p-0">
+        <iframe id="reportFrame" src="about:blank" style="width:100%;height:80vh;border:0;"></iframe>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- File listing modal -->
+<div class="modal fade" id="filesModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h5 class="modal-title small">Files</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="filesModalBody" class="small">Loading…</div>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 (function () {
   const JOB_ID = {{ job_id|tojson }};
@@ -112,13 +171,351 @@
     if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
     return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
   }
+  function fmtSize(n) {
+    if (n == null) return '—';
+    n = +n;
+    if (n < 1024) return n + ' B';
+    if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+    if (n < 1024*1024*1024) return (n/1024/1024).toFixed(1) + ' MB';
+    return (n/1024/1024/1024).toFixed(2) + ' GB';
+  }
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // bases2fastq folder name is mask_<index>_<sanitized>. We can't always
+  // reconstruct safe_mask client-side from the mask string, so we fetch
+  // the actual folder listing and pair folders to mask rows by index.
+  let MASK_FOLDERS = []; // list of {folder, has_runstats, has_metrics, has_log, report}
+
+  function safeMaskForRow(row, rankIndex) {
+    // Best effort: match by index in MASK_FOLDERS (results are score-sorted,
+    // folders are filesystem-sorted as mask_0_, mask_1_…). If a row carries
+    // a folder hint via `source` or `mask`, try a name match first.
+    if (!MASK_FOLDERS.length) return null;
+    // exact suffix match: folder mask_<i>_<safe> where safe was derived
+    // from the mask string with non-alphanumerics → '_'. Try sanitize.
+    const sanitized = row.mask.replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/_+/g, '_');
+    const exact = MASK_FOLDERS.find(f => f.folder.endsWith('_' + sanitized));
+    if (exact) return exact;
+    // Fallback: positional.
+    if (rankIndex < MASK_FOLDERS.length) return MASK_FOLDERS[rankIndex];
+    return null;
+  }
+
+  async function fetchJSON(url) {
+    const r = await fetch(url);
+    if (!r.ok) {
+      const t = await r.text().catch(() => '');
+      throw new Error('HTTP ' + r.status + (t ? ': ' + t : ''));
+    }
+    return r.json();
+  }
+
+  function renderTable(results) {
+    const tbody = document.getElementById('results-tbody');
+    tbody.replaceChildren();
+    if (!results.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 7;
+      td.className = 'text-center text-muted py-3';
+      td.textContent = 'No per-mask results yet — integrator may not have run.';
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+    results.forEach((r, i) => {
+      const tr = document.createElement('tr');
+      if (i === 0) tr.className = 'table-success';
+      tr.innerHTML =
+        '<td>' + (i+1) + '</td>' +
+        '<td><code>' + esc(r.mask) + '</code></td>' +
+        '<td>' + esc(r.lane) + '</td>' +
+        '<td class="text-end">' + fmtNum(r.assigned_pct, 2) + '</td>' +
+        '<td class="text-end">' + fmtNum(r.q30_pct, 2) + '</td>' +
+        '<td class="text-end fw-bold">' + fmtNum(r.score, 2) + '</td>' +
+        '<td class="text-muted">' + esc(r.source || '—') + '</td>';
+      tbody.appendChild(tr);
+    });
+  }
+
+  function renderChart(results) {
+    const canvas = document.getElementById('cmp-chart');
+    const emptyMsg = document.getElementById('chart-empty');
+    if (!results.length) {
+      emptyMsg.classList.remove('d-none');
+      canvas.classList.add('d-none');
+      return;
+    }
+    emptyMsg.classList.add('d-none');
+    canvas.classList.remove('d-none');
+    if (typeof Chart === 'undefined') {
+      emptyMsg.textContent = 'Chart.js failed to load.';
+      emptyMsg.classList.remove('d-none');
+      canvas.classList.add('d-none');
+      return;
+    }
+    const labels = results.map(r => r.mask + (r.lane && r.lane !== 'all' ? ' / L' + r.lane : ''));
+    new Chart(canvas.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          { label: '%Assigned', data: results.map(r => r.assigned_pct),
+            backgroundColor: 'rgba(54, 162, 235, 0.7)' },
+          { label: 'Q30%',      data: results.map(r => r.q30_pct),
+            backgroundColor: 'rgba(75, 192, 192, 0.7)' },
+          { label: 'Score',     data: results.map(r => r.score),
+            backgroundColor: 'rgba(255, 159, 64, 0.85)' },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'top', labels: { font: { size: 11 } } },
+          tooltip: { mode: 'index', intersect: false },
+        },
+        scales: {
+          y: { beginAtZero: true, max: 100,
+               ticks: { font: { size: 10 } } },
+          x: { ticks: { font: { size: 10 }, maxRotation: 45, minRotation: 0 } },
+        },
+      },
+    });
+  }
+
+  function renderMaskCards(results) {
+    const wrap = document.getElementById('mask-cards');
+    wrap.replaceChildren();
+    if (!results.length) {
+      wrap.innerHTML =
+        '<div class="alert alert-info small mb-0">' +
+        'Per-mask details will appear here once integration completes.' +
+        '</div>';
+      return;
+    }
+    results.forEach((r, i) => {
+      const folderInfo = safeMaskForRow(r, i);
+      const folder = folderInfo ? folderInfo.folder : null;
+      const reportPath = folderInfo && folderInfo.report
+        ? '/results/' + encodeURIComponent(JOB_ID)
+          + '/files/' + encodeURIComponent(folder)
+          + '/Reports/' + encodeURIComponent(folderInfo.report)
+        : null;
+
+      const card = document.createElement('div');
+      card.className = 'card mb-2';
+      card.dataset.folder = folder || '';
+
+      const rankBadge = i === 0
+        ? '<span class="badge bg-success me-2">#1</span>'
+        : '<span class="badge bg-secondary me-2">#' + (i+1) + '</span>';
+      const scoreBadge = r.score != null
+        ? '<span class="badge bg-light text-dark border">Score ' + fmtNum(r.score, 2) + '</span>'
+        : '';
+
+      const actionsHtml = folder
+        ? (
+            (reportPath
+              ? '<a href="' + reportPath + '" target="_blank" rel="noopener" '
+                + 'class="btn btn-sm btn-outline-success py-0 me-1 js-open-report" '
+                + 'data-url="' + reportPath + '">📑 Open report</a>'
+              : '<span class="text-muted small me-2">no Reports/*.html</span>')
+            + '<button type="button" class="btn btn-sm btn-outline-info py-0 me-1 js-view-b2f-log" '
+            + 'data-folder="' + esc(folder) + '">📜 Bases2Fastq.log</button>'
+            + '<button type="button" class="btn btn-sm btn-outline-secondary py-0 me-1 js-list-files" '
+            + 'data-folder="' + esc(folder) + '">📁 List files</button>'
+          )
+        : '<span class="text-muted small">No on-disk folder mapped.</span>';
+
+      card.innerHTML =
+        '<div class="card-header py-2 d-flex align-items-center">'
+          + rankBadge
+          + '<code class="me-2">' + esc(r.mask) + '</code>'
+          + '<span class="text-muted small me-2">lane ' + esc(r.lane) + '</span>'
+          + '<span class="ms-auto">' + scoreBadge + '</span>'
+        + '</div>'
+        + '<div class="card-body py-2 small">'
+          + '<div class="row g-2">'
+            + '<div class="col-md-4"><strong>%Assigned:</strong> ' + fmtNum(r.assigned_pct, 2) + '</div>'
+            + '<div class="col-md-4"><strong>Q30%:</strong> ' + fmtNum(r.q30_pct, 2) + '</div>'
+            + '<div class="col-md-4"><strong>Source:</strong> <span class="text-muted">' + esc(r.source || '—') + '</span></div>'
+          + '</div>'
+          + (folder
+              ? ('<button type="button" class="btn btn-link btn-sm p-0 mt-2 js-toggle-runstats" '
+                 + 'data-folder="' + esc(folder) + '">Show RunStats highlights ▾</button>'
+                 + '<div class="js-runstats mt-2 d-none"></div>')
+              : '')
+          + '<div class="mt-2">' + actionsHtml + '</div>'
+        + '</div>';
+
+      wrap.appendChild(card);
+    });
+    wireMaskCardEvents();
+  }
+
+  function renderRunStatsSummary(container, data) {
+    if (!data || typeof data !== 'object') {
+      container.innerHTML = '<span class="text-muted">No RunStats.json.</span>';
+      return;
+    }
+    let html = '';
+    const lanes = data.Lanes || data.LaneStats || [];
+    if (Array.isArray(lanes) && lanes.length) {
+      html += '<table class="table table-sm table-bordered mb-0 small">'
+        + '<thead><tr>'
+        + '<th>Lane</th><th class="text-end">PercentPF</th>'
+        + '<th class="text-end">PercentQ30</th><th class="text-end">NumPolonies</th>'
+        + '</tr></thead><tbody>';
+      lanes.forEach(L => {
+        html += '<tr>'
+          + '<td>' + esc(L.Lane != null ? L.Lane : '—') + '</td>'
+          + '<td class="text-end">' + fmtNum(L.PercentPF, 2) + '</td>'
+          + '<td class="text-end">' + fmtNum(L.PercentQ30, 2) + '</td>'
+          + '<td class="text-end">' + (L.NumPolonies != null ? L.NumPolonies : '—') + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table>';
+    } else {
+      // Fall back to top-level highlights.
+      const keys = ['PercentPF', 'PercentQ30', 'NumPolonies', 'TotalYield',
+                    'PercentAssignedReads'];
+      const found = keys.filter(k => k in data);
+      if (found.length) {
+        html += '<dl class="row mb-0 small">';
+        found.forEach(k => {
+          html += '<dt class="col-4">' + esc(k) + '</dt>'
+            + '<dd class="col-8">' + esc(String(data[k])) + '</dd>';
+        });
+        html += '</dl>';
+      } else {
+        html = '<span class="text-muted">RunStats.json has no per-lane fields.</span>';
+      }
+    }
+    container.innerHTML = html;
+  }
+
+  function wireMaskCardEvents() {
+    document.querySelectorAll('.js-toggle-runstats').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const folder = btn.dataset.folder;
+        const card = btn.closest('.card');
+        const target = card.querySelector('.js-runstats');
+        if (!target.classList.contains('d-none')) {
+          target.classList.add('d-none');
+          btn.textContent = 'Show RunStats highlights ▾';
+          return;
+        }
+        if (!target.dataset.loaded) {
+          target.innerHTML = '<span class="text-muted">Loading…</span>';
+          try {
+            const url = '/api/v1/jobs/' + encodeURIComponent(JOB_ID)
+              + '/masks/' + encodeURIComponent(folder) + '/runstats';
+            const r = await fetch(url);
+            if (r.status === 404) {
+              target.innerHTML = '<span class="text-muted">RunStats.json not present.</span>';
+            } else if (!r.ok) {
+              target.innerHTML = '<span class="text-danger">Error: HTTP ' + r.status + '</span>';
+            } else {
+              const data = await r.json();
+              renderRunStatsSummary(target, data);
+            }
+            target.dataset.loaded = '1';
+          } catch (e) {
+            target.innerHTML = '<span class="text-danger">Error: ' + esc(e.message) + '</span>';
+          }
+        }
+        target.classList.remove('d-none');
+        btn.textContent = 'Hide RunStats highlights ▴';
+      });
+    });
+
+    document.querySelectorAll('.js-view-b2f-log').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const folder = btn.dataset.folder;
+        const body = document.getElementById('logModalBody');
+        document.querySelector('#logModal .modal-title').textContent =
+          'Bases2Fastq.log — ' + folder;
+        body.textContent = 'Loading…';
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('logModal')).show();
+        try {
+          const url = '/results/' + encodeURIComponent(JOB_ID)
+            + '/files/' + encodeURIComponent(folder)
+            + '/info/Bases2Fastq.log';
+          const r = await fetch(url);
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          body.textContent = await r.text();
+        } catch (e) {
+          body.textContent = 'Error: ' + e.message;
+        }
+      });
+    });
+
+    document.querySelectorAll('.js-list-files').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const folder = btn.dataset.folder;
+        const body = document.getElementById('filesModalBody');
+        document.querySelector('#filesModal .modal-title').textContent =
+          'Files in ' + folder;
+        body.innerHTML = 'Loading…';
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('filesModal')).show();
+        try {
+          const data = await fetchJSON('/api/v1/jobs/' + encodeURIComponent(JOB_ID)
+            + '/masks/' + encodeURIComponent(folder) + '/files');
+          if (!data.files || !data.files.length) {
+            body.innerHTML = '<span class="text-muted">No files.</span>';
+            return;
+          }
+          let html = '<table class="table table-sm small mb-0">'
+            + '<thead><tr><th>Path</th><th class="text-end">Size</th><th>Type</th></tr></thead><tbody>';
+          data.files.forEach(f => {
+            const href = '/results/' + encodeURIComponent(JOB_ID)
+              + '/files/' + encodeURIComponent(folder) + '/'
+              + f.path.split('/').map(encodeURIComponent).join('/');
+            html += '<tr>'
+              + '<td><a href="' + href + '" target="_blank" rel="noopener">'
+              + esc(f.path) + '</a></td>'
+              + '<td class="text-end text-muted">' + fmtSize(f.size) + '</td>'
+              + '<td class="text-muted">' + esc(f.type) + '</td>'
+              + '</tr>';
+          });
+          html += '</tbody></table>';
+          body.innerHTML = html;
+        } catch (e) {
+          body.innerHTML = '<span class="text-danger">Error: ' + esc(e.message) + '</span>';
+        }
+      });
+    });
+
+    // Open report in iframe modal (preserves "open in new tab" via anchor).
+    document.querySelectorAll('.js-open-report').forEach(a => {
+      a.addEventListener('click', (ev) => {
+        // If user holds modifier/middle-click, let the browser handle it.
+        if (ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.button === 1) return;
+        ev.preventDefault();
+        const url = a.dataset.url;
+        const frame = document.getElementById('reportFrame');
+        const nt = document.getElementById('reportNewTab');
+        frame.src = url;
+        nt.href = url;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('reportModal')).show();
+      });
+    });
+  }
 
   async function load() {
+    // Fetch the on-disk mask folders + the ranked results in parallel.
+    let folders = { folders: [] };
     let data;
     try {
-      const r = await fetch('/api/v1/jobs/' + encodeURIComponent(JOB_ID) + '/results');
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      data = await r.json();
+      [data, folders] = await Promise.all([
+        fetchJSON('/api/v1/jobs/' + encodeURIComponent(JOB_ID) + '/results'),
+        fetchJSON('/api/v1/jobs/' + encodeURIComponent(JOB_ID) + '/masks')
+          .catch(() => ({ folders: [] })),
+      ]);
     } catch (e) {
       const tbody = document.getElementById('results-tbody');
       tbody.replaceChildren();
@@ -131,6 +528,7 @@
       tbody.appendChild(tr);
       return;
     }
+    MASK_FOLDERS = folders.folders || [];
 
     const j = data.job;
     document.getElementById('js-run').textContent = j.run_id;
@@ -143,50 +541,9 @@
     document.getElementById('rec-score').textContent = fmtNum(j.best_score, 2);
     document.getElementById('rec-total').textContent = j.mask_count;
 
-    const tbody = document.getElementById('results-tbody');
-    tbody.replaceChildren();
-    if (!data.results.length) {
-      const tr = document.createElement('tr');
-      const td = document.createElement('td');
-      td.colSpan = 7;
-      td.className = 'text-center text-muted py-3';
-      td.textContent = 'No per-mask results yet — integrator may not have run.';
-      tr.appendChild(td);
-      tbody.appendChild(tr);
-      return;
-    }
-    data.results.forEach((r, i) => {
-      const tr = document.createElement('tr');
-      if (i === 0) tr.className = 'table-success';
-      const rank = document.createElement('td');
-      rank.textContent = (i + 1);
-      tr.appendChild(rank);
-      const maskTd = document.createElement('td');
-      const code = document.createElement('code');
-      code.textContent = r.mask;
-      maskTd.appendChild(code);
-      tr.appendChild(maskTd);
-      const laneTd = document.createElement('td');
-      laneTd.textContent = r.lane;
-      tr.appendChild(laneTd);
-      const assigned = document.createElement('td');
-      assigned.className = 'text-end';
-      assigned.textContent = fmtNum(r.assigned_pct, 2);
-      tr.appendChild(assigned);
-      const q30 = document.createElement('td');
-      q30.className = 'text-end';
-      q30.textContent = fmtNum(r.q30_pct, 2);
-      tr.appendChild(q30);
-      const score = document.createElement('td');
-      score.className = 'text-end fw-bold';
-      score.textContent = fmtNum(r.score, 2);
-      tr.appendChild(score);
-      const src = document.createElement('td');
-      src.className = 'text-muted';
-      src.textContent = r.source || '—';
-      tr.appendChild(src);
-      tbody.appendChild(tr);
-    });
+    renderTable(data.results);
+    renderChart(data.results);
+    renderMaskCards(data.results);
   }
 
   async function openLog(which) {
@@ -210,6 +567,11 @@
   }
   document.getElementById('view-log').addEventListener('click', () => openLog('run'));
   document.getElementById('view-report').addEventListener('click', () => openLog('integrate'));
+
+  // Reset report iframe when modal closes (frees memory + stops media).
+  document.getElementById('reportModal').addEventListener('hidden.bs.modal', () => {
+    document.getElementById('reportFrame').src = 'about:blank';
+  });
 
   load();
 })();

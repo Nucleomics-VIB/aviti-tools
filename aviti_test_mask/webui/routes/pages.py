@@ -11,7 +11,7 @@ from pathlib import Path
 
 from flask import (
     Blueprint, abort, current_app, flash, redirect, render_template,
-    request, url_for,
+    request, send_from_directory, url_for,
 )
 
 from services.db import JobRecord, JobsDAO, RunsMetadataDAO, utc_now_iso
@@ -49,6 +49,37 @@ def history_page():
 @bp.get("/results/<job_id>")
 def results_page(job_id: str):
     return render_template("results.html", job_id=job_id)
+
+
+@bp.get("/results/<job_id>/files/<safe_mask>/<path:filename>")
+def mask_file(job_id: str, safe_mask: str, filename: str):
+    """Serve a file under results/<job_id>/qc_runs/<safe_mask>/.
+
+    Path safety: rejects traversal in ``safe_mask`` and ``filename``;
+    confirms the resolved file resides inside the mask folder.
+    """
+    if not safe_mask or "/" in safe_mask or "\\" in safe_mask \
+            or safe_mask in ("..", "."):
+        abort(404)
+    cfg = _cfg()
+    qc_root = (cfg.results_root / job_id / "qc_runs").resolve()
+    if not qc_root.is_dir():
+        abort(404)
+    mask_root = (qc_root / safe_mask).resolve()
+    try:
+        mask_root.relative_to(qc_root)
+    except ValueError:
+        abort(404)
+    if not mask_root.is_dir():
+        abort(404)
+    target = (mask_root / filename).resolve()
+    try:
+        target.relative_to(mask_root)
+    except ValueError:
+        abort(404)
+    if not target.is_file():
+        abort(404)
+    return send_from_directory(mask_root, filename)
 
 
 @bp.get("/settings")

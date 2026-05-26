@@ -5,6 +5,7 @@ Author: Stephane Plaisance <stephane.plaisance@vib.be>
 """
 from __future__ import annotations
 
+import csv as _csv
 import json as _json
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -14,6 +15,32 @@ from flask import Blueprint, current_app, jsonify, request
 from services.db import JobsDAO, utc_now_iso
 
 bp = Blueprint("api_jobs", __name__, url_prefix="/api/v1")
+
+
+# ── Mask-folder helpers ─────────────────────────────────────────────
+
+
+def _mask_dir(job_id: str, safe_mask: str) -> Path | None:
+    """Resolve <results_root>/<job_id>/qc_runs/<safe_mask> safely.
+
+    Returns the Path only if the folder exists *and* is a direct child
+    of qc_runs/ (rejects traversal). None otherwise.
+    """
+    if not safe_mask or "/" in safe_mask or "\\" in safe_mask \
+            or safe_mask in ("..", "."):
+        return None
+    cfg = _cfg()
+    qc_root = (cfg.results_root / job_id / "qc_runs").resolve()
+    if not qc_root.is_dir():
+        return None
+    target = (qc_root / safe_mask).resolve()
+    try:
+        target.relative_to(qc_root)
+    except ValueError:
+        return None
+    if not target.is_dir():
+        return None
+    return target
 
 
 def _cfg():
@@ -158,6 +185,97 @@ def get_job_log(job_id: str):
         return jsonify({"error": str(exc)}), 500
     return jsonify({"log": content, "size_bytes": size,
                     "state": row["state"]})
+
+
+# ── Per-mask detail endpoints ────────────────────────────────────────
+
+
+@bp.get("/jobs/<job_id>/masks")
+def list_mask_folders(job_id: str):
+    """List actual mask_<N>_<safe> subfolders that exist on disk."""
+    cfg = _cfg()
+    qc_root = cfg.results_root / job_id / "qc_runs"
+    if not qc_root.is_dir():
+        return jsonify({"folders": [], "total": 0})
+    folders: list[dict] = []
+    for p in sorted(qc_root.iterdir()):
+        if not p.is_dir() or not p.name.startswith("mask_"):
+            continue
+        # Find first Reports/*.html (the bases2fastq report).
+        reports = sorted((p / "Reports").glob("*.html")) \
+            if (p / "Reports").is_dir() else []
+        folders.append({
+            "folder": p.name,
+            "has_runstats": (p / "RunStats.json").is_file(),
+            "has_metrics": (p / "Metrics.csv").is_file(),
+            "has_log": (p / "info" / "Bases2Fastq.log").is_file(),
+            "report": reports[0].name if reports else None,
+        })
+    return jsonify({"folders": folders, "total": len(folders)})
+
+
+@bp.get("/jobs/<job_id>/masks/<safe_mask>/runstats")
+def get_mask_runstats(job_id: str, safe_mask: str):
+    mdir = _mask_dir(job_id, safe_mask)
+    if mdir is None:
+        return jsonify({"error": "unknown mask folder"}), 404
+    path = mdir / "RunStats.json"
+    if not path.is_file():
+        return jsonify({"error": "RunStats.json not found"}), 404
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = _json.load(fh)
+    except (OSError, _json.JSONDecodeError) as exc:
+        return jsonify({"error": f"could not parse: {exc}"}), 500
+    return jsonify(data)
+
+
+@bp.get("/jobs/<job_id>/masks/<safe_mask>/metrics")
+def get_mask_metrics(job_id: str, safe_mask: str):
+    mdir = _mask_dir(job_id, safe_mask)
+    if mdir is None:
+        return jsonify({"error": "unknown mask folder"}), 404
+    path = mdir / "Metrics.csv"
+    if not path.is_file():
+        return jsonify({"error": "Metrics.csv not found"}), 404
+    try:
+        with path.open("r", encoding="utf-8", newline="") as fh:
+            reader = _csv.reader(fh)
+            rows = list(reader)
+    except OSError as exc:
+        return jsonify({"error": str(exc)}), 500
+    if not rows:
+        return jsonify({"columns": [], "rows": []})
+    columns = rows[0]
+    data_rows = rows[1:]
+    return jsonify({"columns": columns, "rows": data_rows,
+                    "row_count": len(data_rows)})
+
+
+@bp.get("/jobs/<job_id>/masks/<safe_mask>/files")
+def list_mask_files(job_id: str, safe_mask: str):
+    mdir = _mask_dir(job_id, safe_mask)
+    if mdir is None:
+        return jsonify({"error": "unknown mask folder"}), 404
+    entries: list[dict] = []
+    for sub in sorted(mdir.rglob("*")):
+        if not sub.is_file():
+            continue
+        try:
+            rel = sub.relative_to(mdir).as_posix()
+            stat = sub.stat()
+        except OSError:
+            continue
+        ext = sub.suffix.lower().lstrip(".")
+        kind = ext or "file"
+        entries.append({
+            "name": sub.name,
+            "path": rel,
+            "size": stat.st_size,
+            "type": kind,
+        })
+    return jsonify({"mask": safe_mask, "files": entries,
+                    "total": len(entries)})
 
 
 # ── Actions ──────────────────────────────────────────────────────────
