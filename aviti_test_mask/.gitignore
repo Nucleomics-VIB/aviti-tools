@@ -1,2 +1,11 @@
 archive/
 examples/
+.claude/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+*.db
+*.db-shm
+*.db-wal
