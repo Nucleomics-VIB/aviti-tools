@@ -188,17 +188,26 @@ def create_app() -> Flask:
         return render_template("queue.html")
 
     def _sorted_queue_jobs() -> list[dict]:
-        """Active jobs in display order — running first, then queue order."""
+        """Active jobs in display order — running first, then queue order.
+
+        Each row is enriched with the form-level params parsed out of
+        ``params_json`` so the queue table can show enough detail to tell
+        otherwise-similar submissions apart.
+        """
+        import json as _json
         dao: JobsDAO = app.config["DAO"]
         rows, _ = dao.list(
             states=["queued", "paused", "running", "stopping", "integrating"],
             limit=500,
             order_by="submitted_at ASC",
         )
-        # Active jobs (running/integrating/stopping) go on top, with no
-        # position number. The remaining queued+paused rows keep their
-        # submission order — Move up/down + Start now rewrite submitted_at
-        # to reorder, so this stays as the canonical ordering.
+        for r in rows:
+            try:
+                p = _json.loads(r.get("params_json") or "{}")
+            except _json.JSONDecodeError:
+                p = {}
+            r["lanes"] = p.get("lanes")
+            r["tiles_mode"] = p.get("tiles_mode")
         active_states = {"running", "integrating", "stopping"}
         active = [r for r in rows if r["state"] in active_states]
         waiting = [r for r in rows if r["state"] not in active_states]
