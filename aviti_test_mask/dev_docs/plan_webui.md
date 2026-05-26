@@ -8,21 +8,23 @@
 
 ## Development environment (decided)
 
-- **Host:** this Mac, exclusively. The chicken Ubuntu server is a deploy
-  target only.
-- **NAS:** real, already mounted at
+- **Host:** this Mac, **exclusively** for the full v1 cycle. Dev,
+  testing, and Docker packaging all happen here. A future Ubuntu
+  deployment (chicken or similar) is deferred until v1 is exercised
+  to satisfaction locally; the code stays portable, but the chicken
+  path is not part of the current plan.
+- **NAS:** already mounted at
   `/Volumes/lvs/GBW-0047_NUC_Transfers/0003_Runs/Aviti/`.
-- **Docker:** [colima](https://github.com/abiosoft/colima) — `colima
-  start` provides a Linux VM that hosts the Docker daemon. The
-  `linux/amd64` platform flag in `aviti_test_mask.sh` already accounts
-  for the M2 architecture mismatch.
-- **Dev test run:** `20260522_AV224503_5279_1` (latest run downloaded
-  by the user; full BaseCalls, ~102 GB).
-- **Python:** **dedicated conda env**, never the system or user
-  Python. See "Conda environment" below.
-- **Production target:** chicken (Ubuntu, native Docker, NAS mount
-  path TBD). Same code, same Dockerfile — only the mount paths in
-  compose differ.
+- **Docker:** [colima](https://github.com/abiosoft/colima) provides
+  the Linux VM hosting the Docker daemon. Confirmed running. The
+  `linux/amd64` platform flag in `aviti_test_mask.sh` already handles
+  the M2 architecture mismatch when needed.
+- **Dev test run:** `20260522_AV224503_5279_1` (latest, full BaseCalls
+  ~102 GB).
+- **Python + unix tools:** **dedicated conda env**, never the system
+  Python or host binaries. See "Conda environment" below.
+- **Deferred:** Ubuntu deployment — code stays portable but no work
+  spent on chicken-specific concerns until requested.
 
 ### Conda environment
 
