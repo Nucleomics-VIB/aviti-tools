@@ -6,16 +6,14 @@ Author: Stephane Plaisance <stephane.plaisance@vib.be>
 from __future__ import annotations
 
 import json as _json
-import uuid
-from pathlib import Path
 
 from flask import (
     Blueprint, abort, current_app, flash, redirect, render_template,
     request, send_from_directory, url_for,
 )
 
-from services.db import JobRecord, JobsDAO, RunsMetadataDAO, utc_now_iso
-from services.discovery import resolve_tile_spec
+from services.db import JobsDAO, RunsMetadataDAO
+from services.job_submission import submit_job
 from services.masks_loader import load_builtin_masks
 from services.users_loader import load_users
 
@@ -147,85 +145,58 @@ def submit_form(run_internal_id: str):
     )
 
 
+def _pick_masks(form) -> list[str]:
+    """Extract the mask list from the submit form's multi-input shape."""
+    masks_source = form.get("masks_source", "builtin")
+    if masks_source == "builtin":
+        return form.getlist("builtin_masks")
+    if masks_source == "typed":
+        t = (form.get("typed_mask") or "").strip()
+        return [t] if t else []
+    # uploaded mode would parse the uploaded file — deferred.
+    return []
+
+
+def _form_int(form, key: str, default: int) -> int:
+    raw = form.get(key)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 @bp.post("/submit/<run_internal_id>")
 def submit_post(run_internal_id: str):
-    cfg = _cfg()
     runs_dao: RunsMetadataDAO = current_app.config["RUNS_DAO"]
     dao: JobsDAO = current_app.config["DAO"]
     run = runs_dao.get(run_internal_id)
     if run is None:
         abort(404)
+    run = {**run, "run_internal_id": run_internal_id}
 
     form = request.form
-    submitter = (form.get("submitter") or "").strip()
-    if not submitter:
-        flash("Submitter is required.", "danger")
-        return redirect(url_for("pages.submit_form",
-                                run_internal_id=run_internal_id))
-
-    masks_source = form.get("masks_source", "builtin")
-    masks_list: list[str] = []
-    if masks_source == "builtin":
-        masks_list = form.getlist("builtin_masks")
-    elif masks_source == "typed":
-        t = (form.get("typed_mask") or "").strip()
-        if t:
-            masks_list = [t]
-    # uploaded mode would parse the uploaded file — deferred.
-
-    if not masks_list:
-        flash("Pick at least one mask.", "danger")
-        return redirect(url_for("pages.submit_form",
-                                run_internal_id=run_internal_id))
-
-    tiles_mode = form.get("tiles_mode", "default")
-    lanes = form.get("lanes", "all")
-    try:
-        tile_resolution = resolve_tile_spec(
-            Path(run["run_path"]),
-            tiles_mode,
-            tiles_n=int(form.get("tiles_n") or 3),
-            tiles_lane=int(form.get("tiles_lane") or 1),
-            tiles_raw=form.get("tiles_raw"),
-            lanes=lanes,
-        )
-    except ValueError as exc:
-        flash(f"Tile selection error: {exc}", "danger")
-        return redirect(url_for("pages.submit_form",
-                                run_internal_id=run_internal_id))
-    tiles_spec = tile_resolution["spec"]
-    tiles_pattern = tile_resolution["pattern"]
-    tiles_picked = tile_resolution["tiles"]
-
-    job_id = (f"{run['run_id']}__{utc_now_iso().replace(':', '-')}"
-              f"__{uuid.uuid4().hex[:6]}")
-    record = JobRecord(
-        job_id=job_id,
-        submitter=submitter,
-        run_id=run["run_id"],
-        run_path=run["run_path"],
-        params_json=_json.dumps({
-            "lanes": lanes,
-            "tiles_mode": tiles_mode,
-            "tiles_spec": tiles_spec,
-            "tiles_pattern": tiles_pattern,
-            "tiles_picked": tiles_picked,
-        }),
-        masks_source=masks_source,
-        masks_json=_json.dumps(masks_list),
-        state="queued",
-        cache_input=1 if form.get("cache_input") else 0,
-        threads=int(form.get("threads") or cfg.threads),
-        max_jobs=int(form.get("max_jobs") or cfg.max_inner_jobs),
-        docker_image=form.get("docker_image") or cfg.raw.get("docker_image", ""),
-        submitted_at=utc_now_iso(),
-        mask_count=len(masks_list),
-        tiles_spec=tiles_spec,
-        mem_limit_per_job=form.get("mem_limit") or None,
-        run_internal_id=run_internal_id,
+    result = submit_job(
+        _cfg(), dao, run,
+        submitter=form.get("submitter", ""),
+        masks_source=form.get("masks_source", "builtin"),
+        masks_list=_pick_masks(form),
+        tiles_mode=form.get("tiles_mode", "default"),
+        tiles_n=_form_int(form, "tiles_n", 3),
+        tiles_lane=_form_int(form, "tiles_lane", 1),
+        tiles_raw=form.get("tiles_raw"),
+        lanes=form.get("lanes", "all"),
+        threads=_form_int(form, "threads", _cfg().threads),
+        max_jobs=_form_int(form, "max_jobs", _cfg().max_inner_jobs),
+        docker_image=form.get("docker_image") or None,
+        mem_limit=form.get("mem_limit") or None,
+        cache_input=bool(form.get("cache_input")),
     )
-    dao.insert(record)
-    flash(f"Job {job_id} queued.", "success")
+    if result.ok:
+        flash(f"Job {result.job_id} queued.", "success")
+    else:
+        flash(result.error, "danger")
     return redirect(url_for("pages.submit_form",
                             run_internal_id=run_internal_id))
 
