@@ -62,20 +62,19 @@ def resolve_tile_spec(
             return items
         return [t for t in items if t and t[0] == "L" and t[1] in lane_filter]
 
-    # Each picked tile becomes ^TILE$ so bases2fastq's --include-tile
-    # (regex-based) matches only the exact tile name. Without anchors,
-    # 'L1R09C01S1' was matching L1R09C02 / C03 as well, breaking the
-    # single-tile fast path.
-    def _anchored(tiles: list[str]) -> str:
-        return "|".join(f"^{t}$" for t in tiles)
+    # Tile pattern is the operator's --include-tile arg. The worker
+    # always pairs it with --exclude-tile L.R..C..S. (see
+    # pipeline_invocation.build_script_command), so the pattern itself
+    # doesn't need ^…$ anchors — the exclude-all + re-include rule from
+    # Element's bases2fastq docs handles the restriction.
+    def _join(tiles: list[str]) -> str:
+        return "|".join(tiles)
 
     if tiles_mode == "default":
         # bases2fastq with --qc-only and no --include-tile processes the
-        # first tile of each lane present. We pick those tiles here AND
-        # pass them concretely via an anchored --include-tile so the
-        # lane filter actually takes effect AND we don't get neighbour
-        # columns / surfaces matching by accident. Falls back to no
-        # flag only when the manifest tile list is absent.
+        # first tile of each lane present. We pick those tiles here and
+        # pass them concretely so the lane filter takes effect. Falls
+        # back to no flag only when the manifest tile list is absent.
         all_tiles = filter_by_lane(_read_tiles_list(run_path))
         if not all_tiles:
             return {"spec": "default", "pattern": None, "tiles": [], "count": 0}
@@ -87,20 +86,21 @@ def resolve_tile_spec(
                     by_lane[lane] = t
         picked = [by_lane[k] for k in sorted(by_lane)]
         return {"spec": "default",
-                "pattern": _anchored(picked) if picked else None,
+                "pattern": _join(picked) if picked else None,
                 "tiles": picked, "count": len(picked)}
 
     if tiles_mode == "all":
+        # "all" means no restriction — omit both --include-tile and
+        # --exclude-tile so bases2fastq processes everything it would
+        # by default. Tile list still populated for UI display.
         all_tiles = filter_by_lane(_read_tiles_list(run_path))
-        # "all" pattern is regex with wildcards — anchor it too so it
-        # only matches strings that are exactly a tile ID.
-        return {"spec": "all", "pattern": "^L.R..C..S.$",
+        return {"spec": "all", "pattern": None,
                 "tiles": all_tiles, "count": len(all_tiles)}
 
     if tiles_mode == "lane":
         lane = int(tiles_lane or 1)
         return {"spec": f"lane:{lane}",
-                "pattern": f"^L{lane}R..C..S.$",
+                "pattern": f"L{lane}R..C..S.",
                 "tiles": [], "count": -1}
 
     if tiles_mode == "raw":
@@ -123,7 +123,7 @@ def resolve_tile_spec(
             picked = _r.sample(all_tiles, n)
         return {
             "spec": f"{tiles_mode}:{len(picked)}",
-            "pattern": _anchored(picked),
+            "pattern": _join(picked),
             "tiles": picked,
             "count": len(picked),
         }

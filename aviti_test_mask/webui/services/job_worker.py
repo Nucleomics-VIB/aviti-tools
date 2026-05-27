@@ -35,6 +35,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import pipeline_invocation as pipeline
 from .config_loader import WebUIConfig
 from .db import JobsDAO, utc_now_iso
 
@@ -42,40 +43,6 @@ log = logging.getLogger("job_worker")
 
 POLL_INTERVAL_SECONDS = 2.0
 CANCEL_GRACE_SECONDS = 30
-
-
-def _extract_error_message(log_path: Path, rc: int, *,
-                            max_chars: int = 500) -> str:
-    """Pull the most informative line from a failed run.log.
-
-    Prefers, in order:
-    1. A line containing ``❌`` (the script's failure markers).
-    2. A line starting with ``Error:`` / ``error:`` / ``Traceback``.
-    3. The last non-empty line.
-    Falls back to ``f"script exit {rc}"`` if the log can't be read.
-    """
-    try:
-        text = log_path.read_text(errors="replace")
-    except OSError:
-        return f"script exit {rc}"
-    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
-    if not lines:
-        return f"script exit {rc}"
-    candidates: list[str] = []
-    for ln in lines:
-        if "❌" in ln:
-            candidates.append(ln)
-    if not candidates:
-        for ln in lines:
-            low = ln.lower()
-            if low.startswith("error") or low.startswith("traceback"):
-                candidates.append(ln)
-    if not candidates:
-        candidates.append(lines[-1])
-    msg = candidates[-1].strip()
-    if len(msg) > max_chars:
-        msg = msg[:max_chars] + "…"
-    return f"[exit {rc}] {msg}"
 
 
 @dataclass
@@ -203,31 +170,11 @@ class JobWorker:
         finally:
             with self._lock:
                 self._active.pop(job_id, None)
-        log_path = session_dir / "run.log"
-        rc = self._infer_script_exit_from_log(log_path)
-        self._on_process_exit(aj, rc)
-
-    def _infer_script_exit_from_log(self, log_path: Path) -> int:
-        """Read the trailing '📊 X/N succeeded | F failed' line and
-        return 0 if F == 0 else 1. Falls back to 1 if the marker is
-        absent (container exited before the script summary)."""
-        try:
-            size = log_path.stat().st_size
-            with log_path.open("rb") as fh:
-                if size > 32 * 1024:
-                    fh.seek(-32 * 1024, 2)
-                tail = fh.read().decode("utf-8", errors="replace")
-        except OSError:
-            return 1
-        for line in reversed(tail.splitlines()):
-            if "succeeded" in line and "failed" in line and line.startswith("📊"):
-                # e.g. "📊 9/9 succeeded  |  0 failed"
-                try:
-                    fpart = line.split("|", 1)[1]
-                    return 0 if int(fpart.strip().split()[0]) == 0 else 1
-                except (IndexError, ValueError):
-                    return 1
-        return 1
+        log_path = session_dir / pipeline.LOG_FILE_NAME
+        tail = pipeline.read_log_tail(log_path)
+        rc = pipeline.infer_exit_from_summary(tail)
+        # No summary line → assume failure (the script never reached it).
+        self._on_process_exit(aj, rc if rc is not None else 1)
 
     # ── Main loop ────────────────────────────────────────────────────
 
@@ -252,30 +199,17 @@ class JobWorker:
         with self._lock:
             snapshot = list(self._active.values())
         for aj in snapshot:
-            log_path = aj.session_dir / "run.log"
+            log_path = aj.session_dir / pipeline.LOG_FILE_NAME
             if not log_path.exists():
                 continue
-            try:
-                # Tail the last 32 KB — counts stay accurate because the
-                # script never repeats per-mask result lines.
-                size = log_path.stat().st_size
-                with log_path.open("rb") as fh:
-                    if size > 32 * 1024:
-                        fh.seek(-32 * 1024, 2)
-                    text = fh.read().decode("utf-8", errors="replace")
-            except OSError:
-                continue
-            ok = sum(1 for ln in text.splitlines()
-                     if ln.startswith("✅ [") and "completed" in ln)
-            bad = sum(1 for ln in text.splitlines()
-                      if ln.startswith("❌ [") and
-                      ("FAILED" in ln or "KILLED" in ln))
+            text = pipeline.read_log_tail(log_path)
+            counts = pipeline.count_progress(text)
             current = self.dao.get(aj.job_id) or {}
-            if (current.get("masks_succeeded") != ok
-                    or current.get("masks_failed") != bad):
+            if (current.get("masks_succeeded") != counts.succeeded
+                    or current.get("masks_failed") != counts.failed):
                 self.dao.update(aj.job_id,
-                                masks_succeeded=ok,
-                                masks_failed=bad)
+                                masks_succeeded=counts.succeeded,
+                                masks_failed=counts.failed)
 
     # ── Launch ───────────────────────────────────────────────────────
 
@@ -341,55 +275,46 @@ class JobWorker:
                 error_message=f"[preflight] {preflight_err}",
             )
             log.warning("preflight failed for %s: %s", job_id, preflight_err)
-            (session_dir / "run.log").write_text(
+            (session_dir / pipeline.LOG_FILE_NAME).write_text(
                 f"# {utc_now_iso()} preflight failed: {preflight_err}\n"
             )
             return
-        # Persist the resolved mask list into a small YAML the script reads.
         try:
             masks = json.loads(row.get("masks_json") or "[]")
         except json.JSONDecodeError:
             masks = []
-        masks_file = session_dir / "masks.yaml"
-        with masks_file.open("w") as fh:
-            fh.write("masks:\n")
-            for m in masks:
-                fh.write(f"  - \"{m}\"\n")
+        masks_file = pipeline.write_masks_file(session_dir, masks)
 
-        # Resolved tile pattern (None means "default — no flag").
         try:
             params = json.loads(row.get("params_json") or "{}")
         except json.JSONDecodeError:
             params = {}
-        include_tile = params.get("tiles_pattern") or ""
+        tile_pattern = params.get("tiles_pattern") or None
 
-        cmd: list[str] = [
-            str(self.script_path),
-            "-i", row["run_path"],
-            "-o", str(session_dir),
-            "-m", str(masks_file),
-            "-p", str(row["threads"]),
-            "-j", str(row["max_jobs"]),
-            "--job-id", job_id,
-        ]
-        if include_tile:
-            cmd += ["--include-tile", include_tile]
-        if row.get("mem_limit_per_job"):
-            cmd += ["--mem-limit", row["mem_limit_per_job"]]
-        if row.get("cache_input"):
-            cmd += ["--cache-input"]
+        cmd = pipeline.build_script_command(
+            self.script_path,
+            run_path=row["run_path"],
+            session_dir=session_dir,
+            masks_file=masks_file,
+            threads=row["threads"],
+            max_jobs=row["max_jobs"],
+            job_id=job_id,
+            tile_pattern=tile_pattern,
+            mem_limit=row.get("mem_limit_per_job") or None,
+            cache_input=bool(row.get("cache_input")),
+        )
 
-        log_path = session_dir / "run.log"
+        log_path = session_dir / pipeline.LOG_FILE_NAME
         log_fh = log_path.open("ab", buffering=0)
         log_fh.write(
             f"# {utc_now_iso()} launching: {' '.join(cmd)}\n".encode()
         )
 
         # Start a new process group so we can SIGTERM the whole tree on cancel.
-        spawn_env = {**os.environ, "CONDA_ENV_NAME": self.cfg.conda_env_name}
         proc = subprocess.Popen(
             cmd, stdout=log_fh, stderr=subprocess.STDOUT,
-            start_new_session=True, close_fds=True, env=spawn_env,
+            start_new_session=True, close_fds=True,
+            env=pipeline.script_env(self.cfg.conda_env_name),
         )
 
         self.dao.update(job_id, state="running",
@@ -436,7 +361,11 @@ class JobWorker:
                 duration = None
 
         if rc != 0:
-            msg = _extract_error_message(aj.session_dir / "run.log", rc)
+            log_text = pipeline.read_log_tail(
+                aj.session_dir / pipeline.LOG_FILE_NAME,
+                tail_bytes=64 * 1024,
+            )
+            msg = pipeline.extract_error_message(log_text, rc)
             self.dao.update(aj.job_id, state="failed",
                             exit_code=rc,
                             duration_seconds=duration,
@@ -458,7 +387,7 @@ class JobWorker:
                             error_message="integrator script missing")
             return
         cmd = [str(integrator), "-o", str(aj.session_dir)]
-        log_path = aj.session_dir / "integrate.log"
+        log_path = aj.session_dir / pipeline.INTEGRATOR_LOG_NAME
         try:
             with log_path.open("ab", buffering=0) as fh:
                 rc = subprocess.call(cmd, stdout=fh, stderr=subprocess.STDOUT)
@@ -476,54 +405,35 @@ class JobWorker:
             self._persist_mask_results(aj)
 
     def _persist_mask_results(self, aj: _ActiveJob) -> None:
-        """Parse <session>/mask_integration_summary.csv → mask_results table.
+        """Parse mask_integration_summary.csv → mask_results table.
         Best mask + score also bubble up to the jobs row so the History
         page can rank without re-reading the CSV.
         """
-        csv_path = aj.session_dir / "mask_integration_summary.csv"
-        if not csv_path.exists():
-            log.warning("job %s: integrator OK but summary CSV missing", aj.job_id)
+        rows = pipeline.read_integrator_csv(aj.session_dir)
+        if not rows:
+            log.warning("job %s: integrator OK but summary CSV missing/empty",
+                        aj.job_id)
             return
-        try:
-            import csv as _csv
-            with csv_path.open("r", encoding="utf-8", newline="") as fh:
-                rows = list(_csv.DictReader(fh))
-        except OSError as exc:
-            log.warning("job %s: cannot read summary CSV: %s", aj.job_id, exc)
-            return
-
-        def _f(v: str) -> float | None:
-            if v is None or v == "":
-                return None
-            try:
-                return float(v)
-            except ValueError:
-                return None
-
         best_mask: str | None = None
         best_score: float | None = None
         for r in rows:
-            mask = (r.get("Mask") or "").strip()
-            if not mask:
-                continue
-            score = _f(r.get("Score") or "")
             try:
                 self.dao.add_mask_result(
-                    aj.job_id, mask,
+                    aj.job_id, r.mask,
                     lane="all",
                     status="ok",
-                    q30_pct=_f(r.get("Q30%") or ""),
-                    assigned_pct=_f(r.get("%Assigned") or ""),
-                    score=score,
-                    source=(r.get("Source") or None),
+                    q30_pct=r.q30_pct,
+                    assigned_pct=r.assigned_pct,
+                    score=r.score,
+                    source=r.source,
                 )
             except (ValueError, sqlite3.IntegrityError) as exc:
                 log.warning("job %s mask %s: insert failed: %s",
-                            aj.job_id, mask, exc)
+                            aj.job_id, r.mask, exc)
                 continue
-            if score is not None and (best_score is None or score > best_score):
-                best_score = score
-                best_mask = mask
+            if r.score is not None and (best_score is None or r.score > best_score):
+                best_score = r.score
+                best_mask = r.mask
         if best_mask is not None:
             self.dao.update(aj.job_id,
                             best_mask=best_mask,
