@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from . import job_lifecycle
+
 SCHEMA_VERSION = 1
 
 SCHEMA_SQL = """
@@ -121,10 +123,9 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 """
 
-VALID_STATES = {
-    "queued", "paused", "running", "integrating",
-    "stopping", "done", "failed", "cancelled", "deleted",
-}
+# Mirrored from job_lifecycle.ALL_STATES so existing imports of
+# ``VALID_STATES`` keep working — the FSM module is the single source.
+VALID_STATES = job_lifecycle.ALL_STATES
 
 # Columns updatable via JobsDAO.update() — anything outside this set is rejected
 # to defeat caller-controlled column-name injection in the dynamic SQL builders.
@@ -231,6 +232,16 @@ class JobsDAO:
         params = dict(fields)
         params["job_id"] = job_id
         with self._connect() as conn:
+            if "state" in fields:
+                cur = conn.execute(
+                    "SELECT state FROM jobs WHERE job_id=?", (job_id,)
+                ).fetchone()
+                if cur is not None:
+                    # Raises IllegalTransition (a ValueError subclass)
+                    # if the move isn't in the FSM's ALLOWED set.
+                    job_lifecycle.validate_transition(
+                        cur["state"], fields["state"]
+                    )
             conn.execute(
                 f"UPDATE jobs SET {set_clause} WHERE job_id=:job_id",  # noqa: S608
                 params,

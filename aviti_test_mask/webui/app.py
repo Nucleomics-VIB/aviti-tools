@@ -16,11 +16,12 @@ from __future__ import annotations
 import os
 import secrets
 
-from flask import Flask
+from flask import Flask, jsonify
 
 from services.config_loader import env_config_path, load
 from services.db import JobsDAO, RunsMetadataDAO
 from services.discovery import check_nas_mount
+from services.job_lifecycle import IllegalTransition
 from services.job_worker import JobWorker
 from routes import register_all
 
@@ -43,6 +44,17 @@ def create_app() -> Flask:
             worker = JobWorker(cfg, app.config["DAO"])
             worker.start()
             app.config["WORKER"] = worker
+
+    @app.errorhandler(IllegalTransition)
+    def _illegal_transition(exc: IllegalTransition):
+        # Return 409 Conflict instead of 500 when a route attempts a
+        # state mutation the FSM forbids. Routes have their own
+        # pre-checks; this is the safety net behind them.
+        return jsonify({
+            "error": str(exc),
+            "current": exc.current,
+            "target": exc.target,
+        }), 409
 
     @app.context_processor
     def inject_globals() -> dict:
