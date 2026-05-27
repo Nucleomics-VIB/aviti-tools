@@ -2,6 +2,7 @@ archive/
 examples/
 results/
 backups/
+docker/config/
 .claude/
 __pycache__/
 *.pyc

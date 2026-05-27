@@ -1,36 +1,42 @@
-# Handoff — 2026-05-27 (mid-day, refresh 2)
+# Handoff — 2026-05-27 (afternoon, refresh 3)
 
 State at session checkpoint. Pick up here next session.
 
 ## What's running
 
-Nothing. Server stopped, no docker containers, no bash orphans, no
-queued/running jobs.
+Nothing. Smoke-test container `aviti_smoke` stopped + removed, dev
+server not running, no bash orphans, no queued/running jobs.
 
 ```bash
 docker ps --filter 'label=aviti_job_id'   # empty
+docker ps --filter name=aviti             # empty
 ps -ef | grep aviti_test_mask.sh          # empty
 lsof -ti :8765                             # empty
 ```
 
+The image `aviti_test_mask_webui:latest` (684 MB, arm64) is left in
+the local Docker — see Docker smoke-test below. Safe to `docker rmi`.
+
 ## Repo state
 
-Branch `develop`, **5 commits ahead of `origin/develop`** (not yet
-pushed). Latest commit: **`48ae7a6` — `refactor(webui): extract
-DockerClient from job_worker`**.
+Branch `develop`, up to date with `origin/develop`. Working tree has
+**one uncommitted change**: `.gitignore` adds `docker/config/` (the
+operator-staged config dir the Docker README tells you to create —
+not a build artefact). Commit when convenient.
 
-Today's commits since yesterday's handoff (newest first):
+Today's commits since yesterday's handoff (newest first), all already
+pushed:
 
-- `48ae7a6` — extract DockerClient (4 inline docker calls → 1 module);
-  worker 484 → 442 LOC
-- `8714828` — extract submit_job service; pages.submit_post 80→30 LOC
-- `2e89358` — explicit job state machine (job_lifecycle.py) + DAO
-  enforcement + HTTP 409 errorhandler
-- `b65d6b3` — order fix: `--exclude-tile` before `--include-tile` in
-  the worker→script CLI
-- `42840ba` — extract pipeline_invocation seam (python↔bash contract);
-  fixes tile-restriction bug by always pairing `--include-tile` with
-  `--exclude-tile 'L.R..C..S.'`
+- `e4b0237` — reserve backup config slot in webui_config.yaml
+- `265db1b` — designs for auth, backup, runtime; build-vs-deploy
+- `efb244a` — `dev_server.sh` mac-dev launcher
+- `cbe049a` — lifecycle integration test
+- `24a6bcc` — handoff refresh
+- `48ae7a6` — extract DockerClient (worker 484 → 442 LOC)
+- `8714828` — extract submit_job service; pages.submit_post 80 → 30 LOC
+- `2e89358` — explicit job state machine + DAO enforcement + HTTP 409
+- `b65d6b3` — order fix: `--exclude-tile` before `--include-tile`
+- `42840ba` — extract pipeline_invocation seam; fixes tile-restriction
 
 ## Tests
 
@@ -110,18 +116,50 @@ file *reads* hard, not because LOC is over some threshold.
 4. **Per-lane project routing on submit** — DB tracks
    `lane_projects_json`, but the submit form doesn't let you assign
    projects per-lane.
-5. **Dockerization stage 2** — `7a739e2` shipped definition files;
-   still need to `docker compose build` and smoke-test the image.
-   **Recommendation: build + smoke-test NOW (throwaway image), but
-   do NOT deploy to Portainer until Auth (item 3) lands.** Building
-   now finds bugs in the Dockerfile, conda-on-Linux, DooD socket,
-   bind-mount path-identity, APP_UID/GID, `tini`, and healthcheck
-   while the rest of the code is calm (FSM/services just refactored,
-   128 tests green). Smoke test = `docker compose up`, hit
-   `/api/v1/health`, list runs from `/`, queue a no-op job. Develop
-   Auth in the local dev loop (`./dev_server.sh --restart` cycles in
-   seconds vs minutes per `docker compose build`). Rebuild and
-   deploy to Portainer only once Auth is in.
+5. **Dockerization stage 2** — *throwaway smoke test done
+   2026-05-27.* Image builds (684 MB arm64, all 12 steps clean), app
+   boots, `/api/v1/health` returns HTTP 200, `/` renders the Submit
+   page (20 KB HTML, correct title, "No runs"). Confirms the
+   Dockerfile, conda-env-on-Ubuntu, entrypoint, tini, and Flask boot
+   are all sound. **Findings worth keeping:**
+   - **Use `docker build` (buildkit), not `docker compose build`
+     (legacy builder), on Mac.** Legacy builder hangs at Step 9
+     (`useradd`) when `APP_UID` is huge (Mac AD-LDAP `id -u` returns
+     ~1.3M, which makes `useradd` write a multi-GB sparse
+     `lastlog`/`faillog` that breaks the legacy builder's overlayfs
+     commit). Buildkit handles it. Non-issue on Ubuntu where APP_UID
+     is small.
+   - **`APP_UID=1000` is mandatory at build time on Mac.** Same
+     sparse-log problem hits container *creation*, not just build —
+     image baked with the giant UID can't be extracted into the
+     overlay. On Ubuntu set APP_UID to the host aviti user's UID.
+   - **`docker/config/` must live in a Colima-mounted host path.**
+     Default `./config` next to `docker-compose.yml` is at a project
+     path Colima doesn't mount, so the bind-mount silently shows up
+     empty inside the container → Flask dies with
+     `FileNotFoundError: /app/webui/config/webui_config.yaml`.
+     Non-issue on Ubuntu. For Mac smoke, set `CONFIG_DIR` to
+     something under `~/...` or `/Volumes/lvs`.
+   - **SQLite WAL on sshfs is the known Mac/Colima pathology.**
+     Bind-mounted `db_path` failed with `unable to open database
+     file` even after `chmod 777`. Won't be the issue on Ubuntu
+     where the results dir is native ext4. For Mac smoke, point
+     `db_path` at a container-local path (`/tmp/aviti/results/…`,
+     deep enough to pass the `results_root` shallow-path guard in
+     `config_loader`).
+   - **Two `degraded` markers in `/health` are environmental, not
+     bugs.** `nas_check` fails when `/data/nas` isn't bound;
+     `docker.ok` fails when `DOCKER_GID` doesn't match the Colima
+     socket's gid. Both resolve naturally on Ubuntu.
+
+   **Still to verify on prod Ubuntu (smoke can't catch on Mac):**
+   docker-out-of-docker actually launching a bases2fastq sibling
+   container; path identity for `/data/results/<job>` resolving
+   correctly on the host daemon; SQLite WAL persistence across
+   restart on bind-mounted ext4; healthcheck flipping to `healthy`.
+
+   **Local image left for inspection** — `docker rmi
+   aviti_test_mask_webui:latest` when done.
 6. **Push to origin** — 5 commits are local-only.
 7. **DB backup loop** — *designed; ready to build after Auth.* See
    "Feature designs → DB backup loop" below.
@@ -144,45 +182,74 @@ state; question history lives in git log.
 
 ### Auth
 
-- **Pattern source:** copy verbatim from FreezerManager
-  (`/Users/u0002316/Documents/GitHub/Nucleomics-VIB/WebTools/dev_wt_FreezerManager/`):
-  `app/auth.py`, `app/routes_blueprints/auth_routes.py`,
-  `app/email.py`, USERS schema in `scripts/init_database.py`,
-  templates `login/forgot_password/reset_password/change_password/users.html`.
-- **Schema:** USERS table with `CHECK(Role IN ('admin','user'))`,
-  `MustChangePassword`, `reset_token`, `reset_token_expires`. Two
-  roles only.
-- **Seed source:** existing `webui/config/users.yaml` (versioned,
-  no secrets). New idempotent script (TBD location — coordinate with
-  architecture) seeds DB on container start; default password
-  `changeme`; first login forces change.
-- **Secrets:** `SECRET_KEY` in gitignored file → Portainer env var.
-  No additional site-wide bearer token (user confirmed: per-user
-  bcrypt IS the access control).
-- **Email:** Flask-Mail + Gmail SMTP (per-app password). Creds via
-  `MAIL_USERNAME` / `MAIL_PASSWORD` env vars (gitignored
-  `scripts/run_with_mail.sh` in dev, Portainer in prod). SMTP host /
-  port / TLS in `webui_config.yaml`. **Graceful degradation:** login
-  hides "Forgot?" when `MAIL_USERNAME` unset; same code in dev and
-  prod.
-- **Route gating:** every page `@login_required` (admin pages
-  `@admin_required`). Anonymous only: `/login`, `/forgot-password`,
-  `/reset-password/<token>`, `/api/v1/health`, static. `/results/<id>`
-  is gated — sharing means adding the recipient to `users.yaml`.
-- **Per-user concurrency:** enforce `max_jobs_per_user` in the
-  `submit_job` service (`8714828`) — count user's jobs in
-  (queued ∪ running), reject with **409** when over (reuses the FSM
-  errorhandler from `2e89358`). Admins bypass.
-- **Live config reload:** admin-only `/admin/reload-config` (or
-  SIGHUP) re-reads `webui_config.yaml`. Rationale: Mac dev is too
-  weak to benchmark; prod tuning needs queue-observe-adjust-requeue
-  without losing running jobs.
-- **Open architectural question (flag for next architecture pass):**
-  user's intuition is a *total thread budget* (e.g. 24) shared
-  across users. Current config models per-container limits
-  (`max_global_containers × max_inner_jobs × threads`). Decide
-  whether to evolve to a global-budget model or keep the factored
-  form.
+**Canonical spec:**
+`~/.claude/skills/webapp_template/AUTH_MODULE.md` — the user updated
+the `webapp_template` skill on 2026-05-27 to include this section,
+distilled from FreezerManager + ProjectManager + PacBioPricing. It
+supersedes the bullet list that lived here before. **Read it first;
+the items below only record where aviti will *depart* from it.**
+
+The spec already prescribes everything the earlier handoff listed
+(USERS schema, two-role CHECK, `MustChangePassword`, reset-token
+columns, Flask-Mail + Gmail app-password, `@login_required` /
+`@admin_required`, anti-enumeration on `/forgot-password`, route
+gating, customisation checklist) *plus* several things the handoff
+missed and we should adopt:
+
+- **Flask-Session filesystem backend** (8h lifetime, HttpOnly,
+  SameSite=Lax, Secure when behind HTTPS) — handoff didn't specify
+  session machinery.
+- **Stable `SECRET_KEY` fallback chain**: env → config →
+  `data/.secret_key` file → `secrets.token_hex(32)`. Dev-server
+  reloads don't log everyone out.
+- **`_cleanup_old_sessions()` helper** invoked on each login —
+  prevents `flask_session/` growing unbounded. Load-bearing.
+- **`secrets.token_urlsafe(32)` reset token, 1-hour expiry,
+  always-success on `/forgot-password`** — anti-enumeration.
+- **Factor `app/email.py` out of `app/auth.py`** — auth code calls
+  named senders (`send_password_reset_email`, etc.); SMTP details
+  live in one place; swapping providers is a config change. Also
+  documents the constraint we already hit: VIB/KU Leuven SMTP
+  gateway won't authenticate a containerised app → masquerade
+  through Gmail (matches what the handoff planned).
+- **Cookie `Secure` flag** controllable via env / config — set when
+  behind HTTPS in Portainer.
+
+**Where aviti will *depart* from the spec (challenge points):**
+
+- **Don't introduce a separate `config.yaml` with `default_users`
+  inside it.** Spec assumes one big config; aviti already splits
+  `webui/config/webui_config.yaml` (operator-tunable runtime) from
+  `webui/config/users.yaml` (identity list, gitignore-safe). Keep
+  the split — feed the seed loop from `users.yaml`, not from a
+  field inside `webui_config.yaml`.
+- **Don't add `scripts/init_database.py` and don't add a separate
+  `ensure_schema_current()` module.** Aviti already initialises
+  the schema on `JobsDAO(path).__init__` via `_init_schema()` (see
+  `webui/services/db.py:186-200`) with `CREATE TABLE IF NOT
+  EXISTS` + a `schema_version` row. **Fold the USERS table into
+  `SCHEMA_SQL` and the additive reset-token migration into
+  `_init_schema()`.** Fewer moving parts than the spec's
+  "two-script" pattern; same idempotent guarantee.
+- **`flask_session/` in `/tmp` (tmpfs), not a bind mount.** Compose
+  already declares `tmpfs: /tmp:size=128m`. Sessions become
+  ephemeral on container restart — fine for an internal tool,
+  zero new bind mount, zero growth risk, no Mac-specific path.
+  Skill defaults to `BASE_DIR / flask_session` which would
+  silently land in the image's writable layers — worse.
+- **Per-user concurrency stays in `submit_job` service** (`8714828`)
+  — count user's (queued ∪ running) jobs, reject with HTTP 409 via
+  the FSM errorhandler from `2e89358`. Admins bypass. (Spec doesn't
+  cover this; it's aviti-specific.)
+- **No "live config reload" admin route in this pass.** Out of
+  scope for auth itself; treat as a separate item if prod tuning
+  proves it necessary.
+
+**Still open (flag for next architecture pass, post-auth):** total
+thread-budget vs per-container limits. Current config models
+`max_global_containers × max_inner_jobs × threads`; user's
+intuition is a *total* budget (e.g. 24 threads shared). Decide
+after Auth lands and we have real prod load numbers.
 
 ### DB backup loop
 
@@ -271,3 +338,14 @@ stopped). Safe to delete or leave for inspection.
 Last generated: `/var/folders/9t/3znyqdv97hd88564_qzqt39d78gyqt/T/architecture-review-20260527-121301.html`
 (temp; macOS may purge it). Re-run `/improve-codebase-architecture`
 when the next set of friction points emerges.
+
+## Skills the next session should know about
+
+- **`webapp_template`** (updated 2026-05-27) — now bundles
+  `AUTH_MODULE.md` with the FreezerManager-derived session-auth
+  spec. Read it before building Auth (item 3). Departure points
+  listed inline in the Auth section above.
+- **`portainer_docker_deployment`** — step-by-step `export →
+  upload → deploy` workflow for shipping the locally-built image
+  to a Portainer host without a registry. Relevant for stage 3 of
+  Dockerization, after Auth lands.
