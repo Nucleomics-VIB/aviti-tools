@@ -103,8 +103,11 @@ def build_script_command(
         "--job-id", job_id,
     ]
     if tile_pattern:
-        cmd += ["--include-tile", tile_pattern,
-                "--exclude-tile", EXCLUDE_TILE_ALL]
+        # Order matters for readability and matches Element's rule:
+        # exclude-all first wipes the default tile set, then
+        # include-tile re-adds the requested picks.
+        cmd += ["--exclude-tile", EXCLUDE_TILE_ALL,
+                "--include-tile", tile_pattern]
     if mem_limit:
         cmd += ["--mem-limit", mem_limit]
     if cache_input:

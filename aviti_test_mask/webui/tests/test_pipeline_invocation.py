@@ -36,7 +36,9 @@ def test_build_command_minimal(tmp_path):
 
 def test_build_command_tile_pattern_pairs_with_exclude_all(tmp_path):
     """The whole point: --include-tile alone doesn't restrict. The
-    worker must always pair it with --exclude-tile L.R..C..S."""
+    worker must always pair it with --exclude-tile L.R..C..S., AND
+    exclude must come first per Element's docs (exclude-all wipes the
+    default set, then include re-adds the picks)."""
     cmd = pipeline.build_script_command(
         Path("/x"), run_path="/r", session_dir=tmp_path,
         masks_file=tmp_path / "m.yaml",
@@ -45,10 +47,11 @@ def test_build_command_tile_pattern_pairs_with_exclude_all(tmp_path):
     )
     assert "--include-tile" in cmd
     assert "--exclude-tile" in cmd
-    inc_idx = cmd.index("--include-tile")
     exc_idx = cmd.index("--exclude-tile")
-    assert cmd[inc_idx + 1] == "L1R09C01S1"
+    inc_idx = cmd.index("--include-tile")
+    assert exc_idx < inc_idx, "exclude must precede include"
     assert cmd[exc_idx + 1] == pipeline.EXCLUDE_TILE_ALL == "L.R..C..S."
+    assert cmd[inc_idx + 1] == "L1R09C01S1"
 
 
 def test_build_command_no_tile_pattern_omits_both(tmp_path):
