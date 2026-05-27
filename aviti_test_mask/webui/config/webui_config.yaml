@@ -48,6 +48,16 @@ retain_jobs_days: 30
 retain_jobs_min_keep: 5
 purge_on_each_request: true
 
+# --- Backups (DB only — see HANDOFF "Feature designs → DB backup loop") ---
+# MUST be a different host path than results_root, otherwise --wipe / rm -rf
+# destroys both. Ubuntu prod overrides to e.g. /data/backups (on a different
+# bind mount). Docker deployment will need a third bind-mount entry in
+# docker-compose.yml mapping BACKUP_ROOT:/data/backups.
+backup_enabled: true
+backup_interval_days: 7
+backup_retain_count: 8
+backup_dir: ../../backups
+
 # --- Files (paths resolved relative to this YAML's location) ---
 users_file: users.yaml
 masks_file: ../../scripts/masks.yaml       # reuse the bash script's mask list

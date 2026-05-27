@@ -209,14 +209,13 @@ state; question history lives in git log.
   (~2 months weekly). Prune after each successful write.
 - **Restore:** manual operator task (no UI button). Stop container →
   copy last good `jobs-*.db` over `jobs.db` → restart.
-- **Config additions** (`webui_config.yaml`):
-  ```yaml
-  # --- Backups (DB only) ---
-  backup_enabled: true
-  backup_interval_days: 7
-  backup_retain_count: 8
-  backup_dir: /data/backups   # different host path than results_root
-  ```
+- **Config additions:** *already in `webui/config/webui_config.yaml`
+  as of the config-slot commit* — keys `backup_enabled`,
+  `backup_interval_days`, `backup_retain_count`, `backup_dir`. Mac
+  dev points at `../../backups` (gitignored); Ubuntu prod overrides
+  to e.g. `/data/backups` on a different bind mount. Docker
+  deployment will need a third bind-mount in `docker-compose.yml`
+  mapping `${BACKUP_ROOT:-/data/backups}:/data/backups`.
 - **Bonus:** when SMTP is configured, send a success/failure email
   to admins after each backup (FreezerManager has
   `send_backup_confirmation_email` ready to copy).

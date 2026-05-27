@@ -1,6 +1,7 @@
 archive/
 examples/
 results/
+backups/
 .claude/
 __pycache__/
 *.pyc
