@@ -2,6 +2,32 @@
 
 State at session checkpoint. Pick up here next session.
 
+## ⚠️ Binding constraint — deletion safety
+
+Operator directive (2026-05-27): **never `rm -rf "$config_var"`** on a
+config-fed path like `$results_root`, `$backup_dir`, or any future
+session/cache dir. Delete only **named children inside** the directory,
+matching a known glob pattern (e.g. `jobs-*.db` for backup prune,
+specific job-session folder paths for auto-purge).
+
+Why: those vars are operator-tunable and default to relative paths during
+dev; a typo or trailing-slash quirk could wipe arbitrary host content. The
+whole reason `backup_dir` must be a different host path from `results_root`
+(see §DB backup loop) is to bound `--wipe` blast radius — that guarantee is
+only as strong as the deletion code.
+
+Code paths affected:
+
+- `dev_server.sh --wipe` (untracked) — audit when next touched. Must
+  enumerate named children, never the parent.
+- Future auto-purge cron (item 2 below).
+- Future DB backup loop prune step (item 7 below).
+- Future auth `_cleanup_old_sessions()` helper — list session files and
+  unlink each by full path; never rmtree the parent.
+
+Persisted to memory as
+`memory/feedback_deletion_safety.md` (auto-loaded next session).
+
 ## What's running
 
 Nothing. Smoke-test container `aviti_smoke` stopped + removed, dev
