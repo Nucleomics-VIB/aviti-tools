@@ -14,6 +14,14 @@ dependencies:
   - humanfriendly>=10.0
   - pytest>=8.0
   - pytest-cov
+  # Auth stack (session login, bcrypt password hashing, email reset).
+  # bcrypt is on conda-forge; Flask-Session and Flask-Mail are pip-only
+  # but pulled in via the pip block below.
+  - bcrypt>=4.0
+  - pip
+  - pip:
+      - Flask-Session>=0.5
+      - Flask-Mail>=0.9
   # Unix tools the bash scripts (aviti_test_mask.sh / integrate_mask_results.sh)
   # rely on. Pinning them here decouples runtime correctness from the host.
   - parallel        # GNU parallel — used by aviti_test_mask.sh -j

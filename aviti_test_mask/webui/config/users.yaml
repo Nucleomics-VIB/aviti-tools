@@ -1,12 +1,34 @@
-# Edit this file to maintain the list of lab members allowed to submit jobs.
-# Each entry exposes one option in the UI's submitter dropdown.
-# Email is informational only (no notifications in v1).
+# Lab-members allowlist + seed for the USERS table.
+#
+# Each entry below is inserted once into the SQLite USERS table on app
+# boot (idempotent: existing usernames are left untouched). After first
+# boot, edits here do NOT update existing rows — to rotate a password,
+# demote a user, or remove access, use the admin UI or delete the row
+# directly. This is deliberate; treating yaml as a wipe vector is unsafe.
+#
+# Fields:
+#   id                   : username (login). Lowercase recommended.
+#   display_name         : shown in the navbar.
+#   email                : required for password reset.
+#   admin                : true bypasses the per-user concurrency cap.
+#   initial_password     : seed password — operator delivers OOB to the user.
+#   must_change_password : true forces a /change-password on first login.
 users:
   - id: splaisan
     display_name: Stephane Plaisance
     email: stephane.plaisance@vib.be
     admin: true
-  # - id: alice
-  #   display_name: Alice Example
-  #   email: alice@vib.be
-  #   admin: false
+    initial_password: changeme
+    must_change_password: true
+  - id: telenet
+    display_name: Stephane telenet
+    email: stephane.plaisance@telenet.be
+    admin: false
+    initial_password: changeme
+    must_change_password: true
+  - id: gmail
+    display_name: Stephane gmail
+    email: stephane.plaisance@gmail.com
+    admin: false
+    initial_password: changeme
+    must_change_password: true

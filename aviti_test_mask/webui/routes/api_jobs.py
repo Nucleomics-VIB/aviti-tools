@@ -10,11 +10,18 @@ import json as _json
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, session
 
 from services.db import JobsDAO, utc_now_iso
 
 bp = Blueprint("api_jobs", __name__, url_prefix="/api/v1")
+
+
+@bp.before_request
+def _require_login():
+    if not session.get("user_id"):
+        return jsonify({"error": "authentication required"}), 401
+    return None
 
 
 # ── Mask-folder helpers ─────────────────────────────────────────────
@@ -281,23 +288,33 @@ def list_mask_files(job_id: str, safe_mask: str):
 # ── Actions ──────────────────────────────────────────────────────────
 
 
+def _can_act_on(row) -> bool:
+    """Job's owner or any admin may cancel/pause/resume/dismiss it."""
+    return (session.get("role") == "admin"
+            or session.get("username") == row["submitter"])
+
+
 @bp.delete("/jobs/<job_id>")
 def delete_job(job_id: str):
     dao = _dao()
     row = dao.get(job_id)
     if row is None:
         return jsonify({"error": "unknown job"}), 404
+    if not _can_act_on(row):
+        return jsonify(
+            {"error": "you can only cancel jobs you submitted"}), 403
     if row["state"] in ("done", "failed", "cancelled", "deleted"):
         return jsonify(
             {"error": f"cannot delete {row['state']!r} job"}), 409
+    actor = session.get("username") or row["submitter"]
     if row["state"] == "queued":
         dao.update(job_id, state="cancelled",
-                   cancelled_by=row["submitter"],
+                   cancelled_by=actor,
                    finished_at=utc_now_iso(),
                    error_message="cancelled before start")
     else:
         dao.update(job_id, state="stopping",
-                   cancelled_by=row["submitter"])
+                   cancelled_by=actor)
     return jsonify({"ok": True})
 
 

@@ -67,3 +67,27 @@ scripts_dir: ../../scripts                 # where aviti_test_mask.sh lives
 # exports CONDA_ENV_NAME=<this> when launching the script. Mac dev
 # typically: 'aviti_test_mask_webui'. Ubuntu prod: 'pythonenv'.
 conda_env_name: aviti_test_mask_webui
+
+# --- Auth (session login + email reset; see services/auth.py + email.py)
+# Session lifetime applies to Flask-Session's filesystem backend. The
+# directory itself lives in /tmp (tmpfs) — see app.py. cleanup_age_hours
+# governs how aggressively expired session files are pruned on login.
+# cookie_secure MUST be true when serving behind HTTPS in Portainer.
+session:
+  lifetime_hours: 8
+  cleanup_age_hours: 72
+  cookie_secure: false
+
+# SMTP wiring. Credentials (MAIL_USERNAME / MAIL_PASSWORD) come from the
+# environment (.env in dev, Portainer env vars in prod) — NEVER stored
+# here. Defaults target Gmail-app-password masquerade (the VIB SMTP
+# gateway will not authenticate a containerised service — see
+# ~/.claude/skills/webapp_template/AUTH_MODULE.md §3).
+email:
+  smtp_server: smtp.gmail.com
+  smtp_port: 587
+  use_tls: true
+
+# Password policy. Increase for prod if VIB IT requires it.
+auth:
+  password_min_length: 8

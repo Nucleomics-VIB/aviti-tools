@@ -35,21 +35,27 @@
 <form method="post" action="/submit/{{ run.run_internal_id }}" class="small">
   <div class="row g-3">
 
-    <!-- Submitter -->
+    <!-- Submitter (from session) -->
     <div class="col-md-4">
       <div class="card h-100">
         <div class="card-header">👤 Submitter</div>
         <div class="card-body">
-          <select name="submitter" class="form-select form-select-sm" required>
-            <option value="">— pick a user —</option>
-            {% for u in users %}
-              <option value="{{ u.id }}"
-                      {% if clone and clone.submitter == u.id %}selected{% endif %}>
-                {{ u.display_name }}{% if u.admin %} (admin){% endif %}
-              </option>
-            {% endfor %}
-          </select>
-          <div class="form-text">Maintained in <code>users.yaml</code>.</div>
+          <div class="form-control form-control-sm bg-light"
+               aria-readonly="true">
+            <strong>{{ session['username'] }}</strong>
+            {% if session['role'] == 'admin' %}
+              <span class="badge bg-secondary ms-1">admin</span>
+            {% endif %}
+          </div>
+          <div class="form-text">
+            Stamped from your login.
+            {% if clone and clone.submitter and clone.submitter != session['username'] %}
+              <br><span class="text-warning">
+                ⓘ Cloned from <code>{{ clone.submitter }}</code>; will be
+                re-submitted as you.
+              </span>
+            {% endif %}
+          </div>
         </div>
       </div>
     </div>

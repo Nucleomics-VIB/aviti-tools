@@ -10,7 +10,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from flask import Blueprint, current_app, jsonify
+from flask import Blueprint, current_app, jsonify, request, session
 
 from services.db import JobsDAO
 from services.discovery import check_nas_mount
@@ -18,6 +18,20 @@ from services.masks_loader import load_builtin_masks
 from services.users_loader import load_users
 
 bp = Blueprint("api_misc", __name__, url_prefix="/api/v1")
+
+
+# /health stays public — the Docker healthcheck calls it without a
+# session. Everything else under this blueprint requires login.
+_PUBLIC_PATHS = {"/api/v1/health"}
+
+
+@bp.before_request
+def _require_login_except_health():
+    if request.path in _PUBLIC_PATHS:
+        return None
+    if not session.get("user_id"):
+        return jsonify({"error": "authentication required"}), 401
+    return None
 
 
 def _cfg():

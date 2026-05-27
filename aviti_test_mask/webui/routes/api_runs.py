@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, session
 
 from services.db import RunsMetadataDAO
 from services.discovery import (
@@ -16,6 +16,13 @@ from services.discovery import (
 )
 
 bp = Blueprint("api_runs", __name__, url_prefix="/api/v1/runs")
+
+
+@bp.before_request
+def _require_login():
+    if not session.get("user_id"):
+        return jsonify({"error": "authentication required"}), 401
+    return None
 
 _VALIDATION_CACHE: dict[tuple[str, float], dict] = {}
 _METADATA_CACHE: dict[tuple[str, float], dict | None] = {}

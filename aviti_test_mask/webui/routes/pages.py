@@ -9,13 +9,13 @@ import json as _json
 
 from flask import (
     Blueprint, abort, current_app, flash, redirect, render_template,
-    request, send_from_directory, url_for,
+    request, send_from_directory, session, url_for,
 )
 
+from services.auth import login_required
 from services.db import JobsDAO, RunsMetadataDAO
 from services.job_submission import submit_job
 from services.masks_loader import load_builtin_masks
-from services.users_loader import load_users
 
 bp = Blueprint("pages", __name__)
 
@@ -25,31 +25,37 @@ def _cfg():
 
 
 @bp.get("/")
+@login_required
 def home():
     return render_template("index.html")
 
 
 @bp.get("/about")
+@login_required
 def about():
     return render_template("about.html")
 
 
 @bp.get("/queue")
+@login_required
 def queue_page():
     return render_template("queue.html")
 
 
 @bp.get("/history")
+@login_required
 def history_page():
     return render_template("history.html")
 
 
 @bp.get("/results/<job_id>")
+@login_required
 def results_page(job_id: str):
     return render_template("results.html", job_id=job_id)
 
 
 @bp.get("/results/<job_id>/files/<safe_mask>/<path:filename>")
+@login_required
 def mask_file(job_id: str, safe_mask: str, filename: str):
     """Serve a file under results/<job_id>/qc_runs/<safe_mask>/.
 
@@ -81,23 +87,25 @@ def mask_file(job_id: str, safe_mask: str, filename: str):
 
 
 @bp.get("/settings")
+@login_required
 def settings_page():
     return render_template("settings.html")
 
 
 @bp.get("/monitor")
+@login_required
 def monitor_page():
     return render_template("monitor.html")
 
 
 @bp.get("/submit/<run_internal_id>")
+@login_required
 def submit_form(run_internal_id: str):
     cfg = _cfg()
     runs_dao: RunsMetadataDAO = current_app.config["RUNS_DAO"]
     run = runs_dao.get(run_internal_id)
     if run is None:
         abort(404)
-    users = load_users(cfg.users_file)
     masks = load_builtin_masks(cfg.masks_file)
     lane_projects = _json.loads(run.get("lane_projects_json") or "{}")
 
@@ -132,7 +140,6 @@ def submit_form(run_internal_id: str):
     return render_template(
         "submit.html",
         run=run,
-        users=users,
         masks=masks,
         lane_projects=lane_projects,
         clone=clone,
@@ -168,6 +175,7 @@ def _form_int(form, key: str, default: int) -> int:
 
 
 @bp.post("/submit/<run_internal_id>")
+@login_required
 def submit_post(run_internal_id: str):
     runs_dao: RunsMetadataDAO = current_app.config["RUNS_DAO"]
     dao: JobsDAO = current_app.config["DAO"]
@@ -179,7 +187,8 @@ def submit_post(run_internal_id: str):
     form = request.form
     result = submit_job(
         _cfg(), dao, run,
-        submitter=form.get("submitter", ""),
+        submitter=session["username"],
+        is_admin=(session.get("role") == "admin"),
         masks_source=form.get("masks_source", "builtin"),
         masks_list=_pick_masks(form),
         tiles_mode=form.get("tiles_mode", "default"),
@@ -202,6 +211,7 @@ def submit_post(run_internal_id: str):
 
 
 @bp.get("/resubmit/<job_id>")
+@login_required
 def resubmit(job_id: str):
     dao: JobsDAO = current_app.config["DAO"]
     row = dao.get(job_id)

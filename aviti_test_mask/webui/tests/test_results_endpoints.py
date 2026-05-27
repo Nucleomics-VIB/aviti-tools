@@ -13,12 +13,27 @@ from types import SimpleNamespace
 from flask import Flask
 
 from routes.api_jobs import bp as bp_api_jobs
+from routes.auth import auth_bp
 from routes.pages import bp as bp_pages
 from services.db import JobsDAO, JobRecord, utc_now_iso
 
 
 JOB_ID = "test-job-1"
 SAFE_MASK = "mask_0_Y12N"
+
+
+def _login(client, *, username: str = "alice", role: str = "user",
+           user_id: int = 1) -> None:
+    """Plant a session as if the user just logged in.
+
+    Used by every test below — the auth blueprint now gates every
+    page/api route except /health, so anonymous test clients hit 401.
+    """
+    with client.session_transaction() as s:
+        s["user_id"] = user_id
+        s["username"] = username
+        s["role"] = role
+        s["must_change_password"] = False
 
 
 def _make_app(tmp_path: Path) -> Flask:
@@ -53,8 +68,12 @@ def _make_app(tmp_path: Path) -> Flask:
     ))
 
     app = Flask(__name__)
+    app.secret_key = "test-secret"
     app.config["WEBUI_CONFIG"] = cfg
     app.config["DAO"] = dao
+    # Auth blueprint needed so url_for('auth.login', ...) resolves; the
+    # tests don't hit /login, they just plant the session via _login().
+    app.register_blueprint(auth_bp)
     app.register_blueprint(bp_pages)
     app.register_blueprint(bp_api_jobs)
     return app
@@ -63,6 +82,7 @@ def _make_app(tmp_path: Path) -> Flask:
 def test_mask_runstats_endpoint(tmp_path):
     app = _make_app(tmp_path)
     client = app.test_client()
+    _login(client)
 
     r = client.get(f"/api/v1/jobs/{JOB_ID}/masks/{SAFE_MASK}/runstats")
     assert r.status_code == 200
@@ -78,6 +98,7 @@ def test_mask_runstats_endpoint(tmp_path):
 def test_mask_metrics_and_files_endpoints(tmp_path):
     app = _make_app(tmp_path)
     client = app.test_client()
+    _login(client)
 
     r = client.get(f"/api/v1/jobs/{JOB_ID}/masks/{SAFE_MASK}/metrics")
     assert r.status_code == 200
@@ -97,6 +118,7 @@ def test_mask_metrics_and_files_endpoints(tmp_path):
 def test_list_mask_folders_endpoint(tmp_path):
     app = _make_app(tmp_path)
     client = app.test_client()
+    _login(client)
     r = client.get(f"/api/v1/jobs/{JOB_ID}/masks")
     assert r.status_code == 200
     j = r.get_json()
@@ -113,6 +135,7 @@ def test_mask_files_safe_serving(tmp_path):
     """Static file route serves real files and rejects traversal."""
     app = _make_app(tmp_path)
     client = app.test_client()
+    _login(client)
 
     # Legitimate file is served.
     r = client.get(

@@ -20,7 +20,7 @@ from typing import Any, Iterator
 
 from . import job_lifecycle
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # v2 adds USERS table for session auth
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -118,6 +118,22 @@ CREATE TABLE IF NOT EXISTS mask_results (
 CREATE INDEX IF NOT EXISTS ix_mask_results_lane ON mask_results(lane);
 CREATE INDEX IF NOT EXISTS ix_mask_results_project ON mask_results(project);
 
+-- Session-auth users. Seeded once on boot from webui/config/users.yaml
+-- (idempotent: existing usernames are left alone).
+CREATE TABLE IF NOT EXISTS users (
+  user_id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  username             TEXT NOT NULL UNIQUE,
+  email                TEXT NOT NULL UNIQUE,
+  hashed_password      TEXT NOT NULL,
+  role                 TEXT NOT NULL CHECK(role IN ('admin','user')),
+  must_change_password INTEGER NOT NULL DEFAULT 1,
+  reset_token          TEXT,
+  reset_token_expires  TEXT,
+  created_at           TEXT NOT NULL,
+  updated_at           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_users_email ON users(email);
+
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY
 );
@@ -203,6 +219,12 @@ class JobsDAO:
             row = cur.fetchone()
             if row is None:
                 conn.execute("INSERT INTO schema_version(version) VALUES (?)",
+                             (SCHEMA_VERSION,))
+            elif row[0] == 1 and SCHEMA_VERSION == 2:
+                # v1 → v2 is purely additive (users table added). The
+                # CREATE TABLE IF NOT EXISTS above already created it on
+                # this connection; just bump the recorded version.
+                conn.execute("UPDATE schema_version SET version=?",
                              (SCHEMA_VERSION,))
             elif row[0] != SCHEMA_VERSION:
                 raise RuntimeError(

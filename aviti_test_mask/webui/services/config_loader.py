@@ -52,6 +52,15 @@ class WebUIConfig:
     scripts_dir: Path
     conda_env_name: str
 
+    # --- Auth (session, email, password policy) ---
+    session_lifetime_hours: int = 8
+    cleanup_age_hours: int = 72
+    cookie_secure: bool = False
+    smtp_server: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    use_tls: bool = True
+    password_min_length: int = 8
+
     raw: dict = field(default_factory=dict)
 
 
@@ -112,6 +121,22 @@ def load(path: str | Path) -> WebUIConfig:
         # Conda env the bash scripts try to activate. Mac dev typically
         # has 'aviti_test_mask_webui'; Ubuntu prod has 'pythonenv'.
         conda_env_name=str(raw.get("conda_env_name", "pythonenv")),
+        # Auth blocks — all optional with sensible defaults so existing
+        # webui_config.yaml files without these keys keep working.
+        session_lifetime_hours=int(
+            (raw.get("session") or {}).get("lifetime_hours", 8)),
+        cleanup_age_hours=int(
+            (raw.get("session") or {}).get("cleanup_age_hours", 72)),
+        cookie_secure=bool(
+            (raw.get("session") or {}).get("cookie_secure", False)),
+        smtp_server=str(
+            (raw.get("email") or {}).get("smtp_server", "smtp.gmail.com")),
+        smtp_port=int(
+            (raw.get("email") or {}).get("smtp_port", 587)),
+        use_tls=bool(
+            (raw.get("email") or {}).get("use_tls", True)),
+        password_min_length=int(
+            (raw.get("auth") or {}).get("password_min_length", 8)),
         raw=raw,
     )
 

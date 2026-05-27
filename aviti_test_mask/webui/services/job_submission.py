@@ -63,12 +63,18 @@ def submit_job(
     docker_image: str | None = None,
     mem_limit: str | None = None,
     cache_input: bool = False,
+    is_admin: bool = False,
 ) -> SubmissionResult:
     """Validate inputs, resolve the tile spec, insert a queued job.
 
     Returns ``SubmissionResult.failure(msg)`` for any user-correctable
     problem (missing submitter, no masks, bad tile spec). Returns
     ``SubmissionResult.success(job_id)`` on insert.
+
+    ``is_admin`` is accepted but not yet consulted here: the per-user
+    concurrency cap is enforced by ``JobWorker`` at scheduling time
+    (see ``services/job_worker.py``), so this param is a forward-looking
+    seam until the worker's fair-share gains an admin bypass.
     """
     submitter = (submitter or "").strip()
     if not submitter:
