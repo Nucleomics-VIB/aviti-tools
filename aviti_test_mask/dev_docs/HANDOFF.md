@@ -1,6 +1,6 @@
-# Handoff — 2026-05-26 end of day
+# Handoff — 2026-05-27 (mid-day)
 
-State at session end. Pick up here next session.
+State at session checkpoint. Pick up here next session.
 
 ## What's running
 
@@ -15,77 +15,92 @@ lsof -ti :8765                             # empty
 
 ## Repo state
 
-Branch `develop`, all work pushed to `origin/develop`. Latest commit:
-**`87d5961` — `fix(webui): anchor --include-tile patterns …`**.
+Branch `develop`, **4 commits ahead of `origin/develop`** (not yet
+pushed). Latest commit: **`8714828` — `refactor(webui): extract
+submit_job service from pages.submit_post`**.
 
-Today's commits (newest first):
+Today's commits since yesterday's handoff (newest first):
 
-- `87d5961` — anchor `--include-tile` patterns *(this turned out to be the wrong fix — see "Open issue" below)*
-- `7a739e2` — docker/ definition files (Dockerfile, compose, entrypoint, .dockerignore, prod config, README) — no build/run
-- `62a415d` — rich per-mask Results page (Chart.js, per-mask cards, embedded reports)
-- `6249685` — reattach reserves concurrency slot (was the cause of two concurrent jobs)
-- `bb35cdb` — Monitor page
-- `a9aa6a7` — clarify "default" tile mode label
-- `72ec663` — default tile mode honours form lane filter
-- `d9b031b` — show actual tiles in queue + 📑 Full Report icon
-- `d2243d2` — runs-per-page default 15
-- `3e8c86c` — worker reattach to surviving containers on restart
-- `596bb88` — History + Results + Settings pages + integrator CSV → mask_results
+- `8714828` — extract submit_job service; pages.submit_post 80→30 LOC
+- `2e89358` — explicit job state machine (job_lifecycle.py) + DAO
+  enforcement + HTTP 409 errorhandler
+- `b65d6b3` — order fix: `--exclude-tile` before `--include-tile` in
+  the worker→script CLI
+- `42840ba` — extract pipeline_invocation seam (python↔bash contract);
+  fixes tile-restriction bug by always pairing `--include-tile` with
+  `--exclude-tile 'L.R..C..S.'`
 
 ## Tests
 
-49 passing (`cd webui && python -m pytest tests/ -q`).
+**105 passing** (`cd webui && pytest tests/ -q`), up from 49 at the
+start of the day.
 
-## Open issue (highest priority for tomorrow)
+| File | Tests | Covers |
+|---|---|---|
+| `test_discovery.py` | 22 | scan, validation, tile resolution |
+| `test_db.py` | 7 | DAO CRUD |
+| `test_masks_loader.py` | 3 | masks YAML loader |
+| `test_persist_mask_results.py` | 2 | integrator CSV persistence |
+| `test_results_endpoints.py` | 15 | results API |
+| `test_pipeline_invocation.py` | 27 | python↔bash contract |
+| `test_job_lifecycle.py` | 20 | state machine + DAO rejection |
+| `test_job_submission.py` | 9 | submit service |
 
-**bases2fastq `--include-tile` does NOT restrict by itself.** Element's
-docs ([Sequencing Optional Arguments](https://docs.elembio.io/docs/bases2fastq/optional-arguments/),
-[Example Commands](https://docs.elembio.io/docs/bases2fastq/example-commands/))
-explicitly say: *"To include specific tiles, you must exclude all
-tiles with the `--exclude-tile` argument"*.
+## Today's architecture pass
 
-So the correct invocation is:
+Driven by `/improve-codebase-architecture` review. Three of six
+candidates landed:
 
-```bash
-bases2fastq /input /output --qc-only --filter-mask R1:Y18N*-R2:Y18N* \
-  --exclude-tile 'L.R..C..S.' \
-  --include-tile L1R09C01S1
-```
+| # | Candidate | Status | Commit |
+|---|---|---|---|
+| 2 | PipelineInvocation seam | done | `42840ba` + `b65d6b3` |
+| 3 | Explicit job state machine | done | `2e89358` |
+| 5 | Extract submit_job service | done | `8714828` |
+| 1 | Split JobWorker into named sub-modules | **pending** | — |
+| 4 | Fuse discovery/ into RunDescriptor | **pending** | — |
+| 6 | Drop stored queue_position | speculative | — |
 
-Today we tried anchored regex (`^L1R09C01S1$`) which did not help —
-neighbour columns C02, C03 kept being processed. The user will test
-the `--exclude-tile + --include-tile` invocation directly against
-bases2fastq tomorrow before we wire it.
+Tile-restriction bug from yesterday's handoff is **fixed**
+(`42840ba` + `b65d6b3`). The pairing rule (`--exclude-tile
+'L.R..C..S.' --include-tile PATTERN`) is enforced by
+`pipeline_invocation.build_script_command()` and pinned by a test
+that asserts `exc_idx < inc_idx`.
 
-When confirmed:
+## Next session — architecture (continued)
 
-1. **`scripts/aviti_test_mask.sh`** — when `--include-tile` is provided,
-   also pass `--exclude-tile 'L.R..C..S.'`. Add a new CLI flag
-   `--exclude-tile` for symmetry or just hardcode the catch-all.
-2. **`webui/services/discovery/tiles.py`** — drop the `^…$` anchors
-   from `_anchored()`. They're irrelevant once `--exclude-tile` is in
-   place; with anchors the regex matches no tile and the fallback set
-   kicks in.
-3. **`webui/tests/test_discovery.py`** — remove the `^…$` assertions
-   added in `87d5961`. Expect plain `"L1R09C01S1"` etc.
+**4. Fuse discovery/ into one RunDescriptor module** (Worth exploring)
+- `webui/services/discovery/{scan,validation,metadata,tiles}.py` all
+  parse `RunParameters.json` independently — three reads per page
+  hit in the worst case.
+- Target: one `describe(run_path) → RunDescriptor` entry point; old
+  modules become private internals.
+- Risk: medium. Touches every discovery caller (pages, api_runs).
 
-## Other pending todos
+**1. Split JobWorker into named internal sub-modules** (Strong)
+- File is **196 LOC** now (was 575 before `42840ba`), so it's no
+  longer the god object the review flagged. Reassess whether the
+  split is still worth the churn.
+- If yes: LogTailer / DockerClient / SlotPool / Reattacher are the
+  natural seams.
+- If not: close out as "deepened in place — extracting pipeline_
+  invocation absorbed the worst of it."
+
+## Other pending todos (carried from yesterday)
 
 1. **Lifecycle integration test** — boot Flask, queue a fake job
-   (with a stub script that just writes a few `✅` lines and exits),
-   verify state transitions queue → running → done. This is the
-   class of test that catches operational bugs unit tests miss (e.g.
-   the reattach slot leak fixed in `6249685` would have been
-   detected).
+   (stub script that writes a few `✅` lines and exits), verify state
+   transitions queue → running → integrating → done. Catches the
+   class of bug the FSM (`2e89358`) prevents at the DAO layer.
 2. **Auto-purge** — `retain_jobs_days` config exists but no scheduled
    cleanup runs. Sessions accumulate on disk.
-3. **Auth layer** — deferred per `plan_webui.md`. Anyone with the URL
-   can submit.
+3. **Auth layer** — deferred per `plan_webui.md`. Anyone with the
+   URL can submit.
 4. **Per-lane project routing on submit** — DB tracks
    `lane_projects_json`, but the submit form doesn't let you assign
    projects per-lane.
-5. **Dockerization** — Stage 2: actually `docker compose build` and
-   smoke-test the image. Definition files are ready (`7a739e2`).
+5. **Dockerization stage 2** — `7a739e2` shipped definition files;
+   still need to `docker compose build` and smoke-test the image.
+6. **Push to origin** — 4 commits are local-only.
 
 ## Mac dev environment
 
@@ -113,3 +128,10 @@ cd /Users/u0002316/Documents/GitHub/Nucleomics-VIB/aviti-tools/aviti_test_mask/w
 `results/20260522_AV224503_5267_2__2026-05-26T19-08-49Z__406d7d` —
 incomplete (got to mask 1 mid-tile-processing then the container was
 stopped). Safe to delete or leave for inspection.
+
+## Architecture review HTML report
+
+Last generated: `/var/folders/9t/3znyqdv97hd88564_qzqt39d78gyqt/T/architecture-review-20260527-121301.html`
+(temp; macOS may purge it). Re-run `/improve-codebase-architecture`
+to regenerate once today's three deepening candidates are reflected
+back in the codebase.

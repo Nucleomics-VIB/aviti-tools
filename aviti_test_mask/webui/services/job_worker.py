@@ -38,6 +38,7 @@ from pathlib import Path
 from . import pipeline_invocation as pipeline
 from .config_loader import WebUIConfig
 from .db import JobsDAO, utc_now_iso
+from .docker_client import DockerClient
 
 log = logging.getLogger("job_worker")
 
@@ -57,10 +58,12 @@ class _ActiveJob:
 
 class JobWorker:
     def __init__(self, cfg: WebUIConfig, dao: JobsDAO, *,
-                 script_path: Path | None = None):
+                 script_path: Path | None = None,
+                 docker: DockerClient | None = None):
         self.cfg = cfg
         self.dao = dao
         self.script_path = script_path or (cfg.scripts_dir / "aviti_test_mask.sh")
+        self.docker = docker or DockerClient()
         self._active: dict[str, _ActiveJob] = {}
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -100,7 +103,8 @@ class JobWorker:
         rows, _ = self.dao.list(states=leftover_states, limit=1000)
         for r in rows:
             jid = r["job_id"]
-            cid = self._find_running_container(jid)
+            cids = self.docker.find_containers_for_job(jid)
+            cid = cids[0] if cids else None
             if cid is None:
                 self.dao.update(
                     jid, state="failed",
@@ -122,18 +126,6 @@ class JobWorker:
             )
             t.start()
 
-    def _find_running_container(self, job_id: str) -> str | None:
-        try:
-            r = subprocess.run(
-                ["docker", "ps", "-q",
-                 "--filter", f"label=aviti_job_id={job_id}"],
-                capture_output=True, text=True, timeout=10,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-        cid = (r.stdout or "").strip().splitlines()
-        return cid[0] if cid else None
-
     def _reattach_thread(self, job_id: str, container_id: str,
                           submitter: str, session_dir: Path) -> None:
         """Poll the surviving container; once it exits, run the normal
@@ -153,16 +145,7 @@ class JobWorker:
             self._active[job_id] = aj
         try:
             while not self._stop.is_set():
-                try:
-                    r = subprocess.run(
-                        ["docker", "inspect", "-f", "{{.State.Status}}",
-                         container_id],
-                        capture_output=True, text=True, timeout=10,
-                    )
-                except (OSError, subprocess.TimeoutExpired):
-                    self._stop.wait(POLL_INTERVAL_SECONDS)
-                    continue
-                status = (r.stdout or "").strip()
+                status = self.docker.inspect_status(container_id)
                 if status not in ("running", "created",
                                   "restarting", "paused"):
                     break
@@ -247,20 +230,8 @@ class JobWorker:
             next(iter(run_path.iterdir()))
         except (StopIteration, OSError) as exc:
             return f"run folder unreadable: {exc}"
-        try:
-            r = subprocess.run(
-                ["docker", "info", "--format", "{{.ServerVersion}}"],
-                capture_output=True, text=True, timeout=10,
-            )
-        except FileNotFoundError:
-            return "docker CLI not on PATH"
-        except subprocess.TimeoutExpired:
-            return "docker daemon unreachable (timeout)"
-        if r.returncode != 0:
-            err = (r.stderr or r.stdout or "").strip().splitlines()
-            tail = err[-1] if err else "docker info failed"
-            return f"docker daemon unreachable: {tail}"
-        return None
+        info = self.docker.daemon_info()
+        return None if info.ok else info.error
 
     def _launch(self, row: dict) -> None:
         job_id = row["job_id"]
@@ -466,19 +437,6 @@ class JobWorker:
 
     def _stop_containers_for(self, job_id: str) -> None:
         """docker stop any running container labelled with our job id."""
-        try:
-            ps = subprocess.run(
-                ["docker", "ps", "-q",
-                 "--filter", f"label=aviti_job_id={job_id}"],
-                capture_output=True, text=True, timeout=10,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return
-        ids = [c.strip() for c in ps.stdout.splitlines() if c.strip()]
-        if not ids:
-            return
-        try:
-            subprocess.run(["docker", "stop", *ids],
-                           capture_output=True, timeout=30)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+        self.docker.stop_containers(
+            self.docker.find_containers_for_job(job_id)
+        )
