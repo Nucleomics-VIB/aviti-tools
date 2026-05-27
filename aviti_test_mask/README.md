@@ -1,3 +1,16 @@
+> ## 📦 This project has moved
+>
+> Active development now lives in a standalone repo:
+>
+> **https://github.com/Nucleomics-VIB/dev_wt_Aviti-test-mask**
+>
+> The content below is a **frozen snapshot** at aviti-tools commit
+> `2022686` (2026-05-27). Issues, PRs, and new work should go to the
+> new repo. This folder is retained as a historical reference and
+> will be archived in a future aviti-tools cleanup.
+
+---
+
 # test run on a random run taken from our NAS
 
 I tried to create a test tool to evaluate several masks and find the one giving the best compromize between read number and quality
