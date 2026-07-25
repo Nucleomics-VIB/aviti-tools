@@ -31,6 +31,11 @@ thumbnail_QC/aviti_thumbnails/
 measure_thumbnails/*.tar
 *.tar.gz
 
+# Working data pulled down by get_aviti_thumbnails.sh — the untarred thumbnail
+# set (~363 MB of PNGs). Regenerate by re-running the script; only the script
+# itself is tracked.
+get_aviti_thumbnails/Data/
+
 # macOS / editor cruft
 .DS_Store
 .DS_Store?
