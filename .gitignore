@@ -36,6 +36,12 @@ measure_thumbnails/*.tar
 # itself is tracked.
 get_aviti_thumbnails/Data/
 
+# Shiny app sample images and generated plots (~21 MB). The loading-class
+# examples here are byte-identical to the tracked originals under
+# aviti_classifier/train/ and aviti_classifier/classify/, so nothing unique is
+# excluded; the rest are generated outputs.
+Aviti_loading_shiny/Data/examples/
+
 # macOS / editor cruft
 .DS_Store
 .DS_Store?
