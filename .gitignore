@@ -11,10 +11,19 @@
 # Bulk AVITI thumbnail image sets and batch QC output.
 # These are large binary PNG collections (hundreds of files, >600 MB) that are
 # kept on local/NAS storage only and deliberately not version-controlled.
-# A single worked example is tracked under aviti_thumbnail_QC/QC_results_one/
-# so the QC scripts remain runnable and documented from a clean clone.
-aviti_thumbnail_QC/aviti_thumbnails/
+#
+# One worked example IS tracked so the QC scripts stay runnable from a clean
+# clone: run V242402_4409_6_ThumbnailLane2 keeps both its input thumbnails
+# (below) and its output under aviti_thumbnail_QC/QC_results_one/.
+# Note the "dir/*" form — git will not descend into a fully-excluded directory,
+# so negations only take effect when the contents (not the dir) are excluded.
+aviti_thumbnail_QC/aviti_thumbnails/*
+!aviti_thumbnail_QC/aviti_thumbnails/V242402_4409_6_ThumbnailLane1.png
+!aviti_thumbnail_QC/aviti_thumbnails/V242402_4409_6_ThumbnailLane2.png
+
 aviti_thumbnail_QC/QC_results_all/
+
+# Stale pre-rename copy of the above (renamed to aviti_thumbnail_QC/ on develop)
 thumbnail_QC/aviti_thumbnails/
 
 # macOS / editor cruft
