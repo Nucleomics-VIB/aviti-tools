@@ -26,6 +26,11 @@ aviti_thumbnail_QC/QC_results_all/
 # Stale pre-rename copy of the above (renamed to aviti_thumbnail_QC/ on develop)
 thumbnail_QC/aviti_thumbnails/
 
+# Thumbnail archives staged for transfer — these run to hundreds of MB each and
+# belong on local/NAS storage, never in git history.
+measure_thumbnails/*.tar
+*.tar.gz
+
 # macOS / editor cruft
 .DS_Store
 .DS_Store?
