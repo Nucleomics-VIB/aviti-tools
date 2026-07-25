@@ -1,0 +1,28 @@
+# ---------------------------------------------------------------------------
+# aviti-tools — repository-wide ignore rules
+#
+# Created by Stephane Plaisance — VIB Nucleomics Core
+# Date: 2026-07-25
+#
+# Per-project rules live in their own .gitignore (e.g. aviti_test_mask/.gitignore);
+# this file holds rules that apply across the whole repository.
+# ---------------------------------------------------------------------------
+
+# Bulk AVITI thumbnail image sets and batch QC output.
+# These are large binary PNG collections (hundreds of files, >600 MB) that are
+# kept on local/NAS storage only and deliberately not version-controlled.
+# A single worked example is tracked under aviti_thumbnail_QC/QC_results_one/
+# so the QC scripts remain runnable and documented from a clean clone.
+aviti_thumbnail_QC/aviti_thumbnails/
+aviti_thumbnail_QC/QC_results_all/
+thumbnail_QC/aviti_thumbnails/
+
+# macOS / editor cruft
+.DS_Store
+.DS_Store?
+._*
+
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
