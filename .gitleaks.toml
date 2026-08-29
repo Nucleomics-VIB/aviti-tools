@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "known dummy credentials used in tests"
+regexes = ['''fresh-pw-1234''']
