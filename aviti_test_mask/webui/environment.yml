@@ -18,7 +18,10 @@ dependencies:
   # bcrypt is on conda-forge; Flask-Session and Flask-Mail are pip-only
   # but pulled in via the pip block below.
   - bcrypt>=4.0
-  - pip
+  # CA trust store: eMudhra CA removed (advisory 2026-10-22)
+  - certifi>=2026.10.19
+  - ca-certificates>=2026.10.19
+  - pip>=26.2.2
   - pip:
       - Flask-Session>=0.5
       - Flask-Mail>=0.9

@@ -50,12 +50,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
 
+# eMudhra CA incident (2026-10-20): refresh the system trust store in its
+# own layer, so a cached OS layer cannot keep the old ca-certificates.
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends --only-upgrade ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 # --- 2. Conda layer: install miniforge + create the env from yml -------
 # Using miniforge (conda-forge default channel — matches environment.yml).
 RUN wget -qO /tmp/miniforge.sh \
       https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-$(uname -m).sh \
     && bash /tmp/miniforge.sh -b -p /opt/conda \
     && rm /tmp/miniforge.sh \
+    && conda clean -afy
+
+# eMudhra CA incident: the Miniforge installer can predate the fix, so
+# raise the CA floors in the base env too.
+RUN conda install -y -n base -c conda-forge \
+        "certifi>=2026.10.19" "ca-certificates>=2026.10.19" \
     && conda clean -afy
 
 # Resolve the env before COPY-ing the rest so layer cache stays hot
