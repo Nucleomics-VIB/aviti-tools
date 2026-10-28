@@ -1,5 +1,10 @@
 # Docker deployment
 
+> **Not deployed.** This folder is a frozen snapshot. No host builds this
+> Dockerfile. The live app is built from
+> [aviti-test-mask](https://github.com/Nucleomics-VIB/aviti-test-mask)
+> (checked 2026-10-28). Do not build or deploy from here.
+
 Production-ready image + compose for the **aviti_test_mask** web UI.
 Build artefacts only — this folder does not contain runtime state.
 

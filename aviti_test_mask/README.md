@@ -2,12 +2,15 @@
 >
 > Active development now lives in a standalone repo:
 >
-> **https://github.com/Nucleomics-VIB/dev_wt_Aviti-test-mask**
+> **https://github.com/Nucleomics-VIB/aviti-test-mask**
 >
 > The content below is a **frozen snapshot** at aviti-tools commit
 > `2022686` (2026-05-27). Issues, PRs, and new work should go to the
 > new repo. This folder is retained as a historical reference and
 > will be archived in a future aviti-tools cleanup.
+>
+> **Not deployed.** No host builds the Dockerfile in this folder. The
+> live app is built from `aviti-test-mask` (checked 2026-10-28).
 
 ---
 
